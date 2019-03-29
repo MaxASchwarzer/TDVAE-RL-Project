@@ -5,21 +5,26 @@ import torch
 from torch.utils import data
 from torchvision import datasets
 import gym
-import gym-vecenv as vecenv
+import gym_vecenv as vecenv
+from collections import deque
+from pylego.reader import Reader
 
-from pylego.reader import DatasetReader
 
 class GymReader(Reader):
 
     def __init__(self,
                 env,
-                batch_size):
+                batch_size,
+                seq_len,
+                iters_per_epoch,
+                done_policy=np.any):
 
         self.envs = [gym.make(env) for i in range(batch_size)]
-        self.env = vecenv.SubprocVecEnv(envs)
+        self.env = vecenv.SubprocVecEnv(self.envs)
+        self.buffers = [deque(maxlen=seq_len) for i in range(5)]
+        self.done_policy = done_policy
 
-        super().__init__({'train': train_dataset, 'val': val_dataset, 'test': test_dataset})
-
+        super().__init__({'train': iters_per_epoch, 'val': iters_per_epoch, 'test': iters_per_epoch})
 
     def iter_batches(self,
                      split_name,
@@ -31,6 +36,18 @@ class GymReader(Reader):
                      epochs=1,
                      max_batches=-1):
 
-        if actions=None:
+        if actions is None:
             # We have to assume a random policy if nobody gives us actions
             actions = [env.action_space.sample() for env in self.envs]
+        self.env.step_async(actions)
+        obs, rewards, done, meta = self.env.step_wait()
+
+        for i, val in enumerate([obs, actions, rewards, done, meta]):
+            self.buffers[i].append(val)
+
+        output = [np.array(buffer) for buffer in self.buffers]
+        if self.done_policy(done):
+            self.env.reset()
+            self.buffer.clear()
+
+        return output
