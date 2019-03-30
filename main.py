@@ -4,17 +4,20 @@ import os
 from pylego.misc import add_argument as arg
 
 from runners.tdvaerunner import TDVAERunner
-
+from runners.gym_runner import GymRunner
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     arg(parser, 'name', type=str, required=True, help='name of the experiment')
-    arg(parser, 'model', type=str, default='vae.vaemodel', help='model to use')
+    arg(parser, 'model', type=str, default='tdvae.vaemodel', help='model to use')
     arg(parser, 'cuda', type=bool, default=True, help='enable CUDA')
     arg(parser, 'load_file', type=str, default='', help='file to load model from')
     arg(parser, 'save_file', type=str, default='model.dat', help='model save file')
     arg(parser, 'save_every', type=int, default=500, help='save every these many global steps (-1 to disable saving)')
     arg(parser, 'data_path', type=str, default='data/MNIST')
+    arg(parser, 'data', type=str, default='gym', help="Data source to use.  Set to gym and set env flag for gym.")
+    arg(parser, 'env', type=str, default='Pong-v0', help="Gym environment to use (if data=gym)")
+    arg(parser, 'iters_per_epoch', type=int, default=100, help="Number of batches per epoch if in Gym.")
     arg(parser, 'logs_path', type=str, default='logs')
     arg(parser, 'force_logs', type=bool, default=False)
     arg(parser, 'optimizer', type=str, default='adam', help='one of: adam')
@@ -29,7 +32,7 @@ if __name__ == '__main__':
     arg(parser, 't_diff_min', type=int, default=1, help='minimum time difference t2-t1')
     arg(parser, 't_diff_max', type=int, default=4, help='maximum time difference t2-t1')
     arg(parser, 'epochs', type=int, default=50000, help='no. of training epochs')
-    arg(parser, 'print_every', type=int, default=100, help='print losses every these many steps')
+    arg(parser, 'print_every', type=int, default=10, help='print losses every these many steps')
     arg(parser, 'gpus', type=str, default='0')
     arg(parser, 'threads', type=int, default=-1, help='data processing threads (-1 to determine from CPUs)')
     arg(parser, 'debug', type=bool, default=False, help='run model in debug mode')
@@ -70,6 +73,8 @@ if __name__ == '__main__':
 
     flags.save_file = flags.log_dir + '/' + flags.save_file
 
-    if flags.model.startswith('tdvae.'):
-        runner = TDVAERunner
+    # if "gym" in flags.model and "tdvae" in flags.model:
+    runner = GymRunner
+    # elif flags.model.startswith('tdvae.'):
+    #     runner = TDVAERunner
     runner(flags).run(visualize_only=flags.visualize_only, visualize_split=flags.visualize_split)

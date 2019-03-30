@@ -8,6 +8,7 @@ import numpy as np
 from pylego import ops
 
 from ..basetdvae import BaseTDVAE
+from ..gymtdvae import BaseGymTDVAE
 
 
 class DBlock(nn.Module):
@@ -48,7 +49,15 @@ class ConvPreProcess(nn.Module):
     """ The pre-process layer for image.
     """
 
-    def __init__(self, input_size, d_hidden, d_out, blocks=None, n_blocks=2, scale=2, stride=2, l_per_block=2):
+    def __init__(self,
+                 input_size,
+                 d_hidden,
+                 d_out,
+                 blocks=None,
+                 n_blocks=5,
+                 scale=[1.5, 1.5],
+                 stride=[4, 4, 2],
+                 l_per_block=[2, 2, 2]):
         super().__init__()
 
         d_in = input_size[0]
@@ -58,23 +67,25 @@ class ConvPreProcess(nn.Module):
         self.bn1 = nn.BatchNorm2d(d_hidden)
 
         if blocks is None:
-            blocks = [(l_per_block, d_hidden*(scale**i), stride) for i in range(n_blocks)]
+            scales = np.cumprod([1] + scale)
+            blocks = [(l_per_block, int(d_hidden*scale), stride) for l_per_block, scale, stride in
+                      zip(l_per_block, scales, stride)]
 
         self.resnet = ops.ResNet(d_hidden, blocks) # Will by default downscale to 210//16, 160//16,
 
-        final_shape = [i//(scale**n_blocks) for i in input_size]
-        total_size = np.prod(final_shape)*blocks[-1][1]
+        self.final_shape = [int(i//(np.prod(stride))) for i in input_size]
+        self.total_size = np.prod(self.final_shape)*blocks[-1][1]
 
-        self.fc1 = nn.Linear(total_size, d_hidden)
-        self.bn2 = nn.BatchNorm1d(d_out)
+        self.fc1 = nn.Linear(self.total_size, d_hidden)
+        self.bn2 = nn.BatchNorm1d(d_hidden)
         self.fc2 = nn.Linear(d_hidden, d_out)
 
     def forward(self, x):
         x1 = self.initial(x)
         x1 = F.relu(x1)
         x1 = self.bn1(x1)
-        x2 = self.resnet(x1).flatten(1, -1)
-        x3 = self.fc1(x2)
+        x2 = self.resnet(x1)
+        x3 = self.fc1(x2.flatten(1, -1))
         x3 = F.relu(x3)
         x3 = self.bn2(x3)
         x4 = self.fc2(x3)
@@ -85,38 +96,46 @@ class ConvDecoder(nn.Module):
     """ The pre-process layer for image.
     """
 
-    def __init__(self, d_out, d_hidden, input_size, blocks=None, n_blocks=2, scale=2, stride=2, l_per_block=2):
+    def __init__(self,
+                 d_out,
+                 d_hidden,
+                 input_size,
+                 blocks=None,
+                 scale=[1.5, 1.5],
+                 stride=[4, 4, 2],
+                 l_per_block=[2, 2, 2]):
         super().__init__()
 
         d_in = input_size[0]
         input_size = input_size[1:]
 
         if blocks is None:
-            blocks = [(l_per_block, d_hidden*(scale**i), -stride) for i in range(n_blocks)]
+            scales = np.cumprod([1] + scale)
+            blocks = [(l_per_block, int(d_hidden*scale), -stride) for l_per_block, scale, stride in
+                      zip(l_per_block, scales, stride)]
 
-        self.final_shape = [i//(scale**n_blocks) for i in input_size]
-        self.total_size = np.prod(self.final_shape)*blocks[-1][1]
+        self.final_shape = [int(i//np.prod(stride)) for i in input_size]
+        self.total_size = int(np.prod(self.final_shape)*blocks[-1][1])
         self.fc1 = nn.Linear(d_out, d_hidden)
         self.bn1 = nn.BatchNorm1d(d_hidden)
         self.fc2 = nn.Linear(d_hidden, self.total_size)
         self.bn2 = nn.BatchNorm2d(blocks[-1][1])
 
-        self.resnet = ops.ResNet(d_hidden, list(reversed(blocks))) # Will by default downscale to 210//16, 160//16,
+        self.resnet = ops.ResNet(blocks[-1][1], list(reversed(blocks))) # Will by default downscale to 210//16, 160//16,
 
-        self.final = nn.Conv2d(d_hidden, d_in, 7, 3)
+        self.final = nn.Conv2d(d_hidden, d_in, 7, 1, 3)
 
     def forward(self, x):
-        import ipdb; ipdb.set_trace()
         x1 = self.fc1(x)
         x1 = F.relu(x1)
         x1 = self.bn1(x1)
-        x2 = self.fc1(x1)
+        x2 = self.fc2(x1)
         x2 = F.relu(x2)
+        x2 = x2.view(x.shape[0], x2.shape[1]//np.prod(self.final_shape), self.final_shape[0], self.final_shape[1])
         x2 = self.bn2(x2)
-        x2.view(x.shape[0], x.shape[1]/np.prod(self.final_shape), self.final_shape[0], self.final_shape[1])
         x3 = self.resnet(x2)
         x4 = self.final(x3)
-        return x4
+        return torch.sigmoid(x4.flatten(1, -1))
 
 
 class Decoder(nn.Module):
@@ -172,11 +191,10 @@ class TDVAE(nn.Module):
                                     for layer in range(layers)])
 
         # state to observation
-        self.x_z = ConvDecoder(layers * z_size, 200, x_size)
+        self.x_z = ConvDecoder(layers * z_size, 32, x_size)
 
     def forward(self, x):
         # pre-process image x
-        import ipdb; ipdb.set_trace()
         im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
@@ -266,8 +284,9 @@ class TDVAE(nn.Module):
 
     def visualize(self, x, t, n):
         # pre-process image x
-        processed_x = self.process_x(x)  # x length is t + 1
-
+        im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
+        processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
+        processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         # aggregate the belief b
         b = self.b_rnn(processed_x)[:, t]  # size: bs, time, layers, dim
 
@@ -299,35 +318,36 @@ class TDVAE(nn.Module):
 
         return torch.stack(rollout_x, dim=1)
 
-#
-# class GymTDVAE(BaseTDVAE):
-#
-#     def __init__(self, flags, *args, **kwargs):
-#         # XXX hardcoded for moving MNIST
-#         super().__init__(TDVAE(28 * 28, 28 * 28, flags.b_size, flags.z_size, flags.layers, flags.samples_per_seq,
-#                                flags.t_diff_min, flags.t_diff_max), flags, *args, **kwargs)
-#
-#     def loss_function(self, forward_ret, labels=None):
-#         (x, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu, qb_z2_b2_logvar,
-#          qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2) = forward_ret
-#
-#         # replicate x multiple times
-#         x = x[None, ...].expand(self.flags.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
-#         x2 = torch.gather(x, 2, t2[..., None, None].expand(-1, -1, -1, x.size(3))).view(-1, x.size(3))
-#         batch_size = x2.size(0)
-#
-#         kl_div_qs_pb = ops.kl_div_gaussian(qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar).mean()
-#
-#         sampled_kl_div_qb_pt = (ops.gaussian_log_prob(qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2) -
-#                                 ops.gaussian_log_prob(pt_z2_z1_mu, pt_z2_z1_logvar, qb_z2_b2)).mean()
-#
-#         bce = F.binary_cross_entropy(pd_x2_z2, x2, reduction='sum') / batch_size
-#         bce_optimal = F.binary_cross_entropy(x2, x2, reduction='sum') / batch_size
-#         bce_diff = bce - bce_optimal
-#
-#         loss = bce_diff + kl_div_qs_pb + sampled_kl_div_qb_pt
-#
-#         return loss, bce_diff, kl_div_qs_pb, sampled_kl_div_qb_pt, bce_optimal
+
+class GymTDVAE(BaseGymTDVAE):
+
+    def __init__(self, flags, *args, **kwargs):
+        # XXX hardcoded for moving MNIST
+        super().__init__(TDVAE((3, 224, 160), 16, flags.b_size, flags.z_size, flags.layers, flags.samples_per_seq,
+                               flags.t_diff_min, flags.t_diff_max), flags, *args, **kwargs)
+
+    def loss_function(self, forward_ret, labels=None):
+        (x, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu, qb_z2_b2_logvar,
+         qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2) = forward_ret
+
+        # replicate x multiple times
+        x = x.flatten(2, -1)
+        x = x.expand(self.flags.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
+        x2 = torch.gather(x, 2, t2[..., None, None].expand(-1, -1, -1, x.size(3))).view(-1, x.size(3))
+        batch_size = x2.size(0)
+
+        kl_div_qs_pb = ops.kl_div_gaussian(qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar).mean()
+
+        sampled_kl_div_qb_pt = (ops.gaussian_log_prob(qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2) -
+                                ops.gaussian_log_prob(pt_z2_z1_mu, pt_z2_z1_logvar, qb_z2_b2)).mean()
+
+        bce = F.mse_loss(pd_x2_z2, x2, reduction='sum') / batch_size
+        bce_optimal = F.mse_loss(x2, x2, reduction='sum') / batch_size
+        bce_diff = bce - bce_optimal
+
+        loss = bce_diff + kl_div_qs_pb + sampled_kl_div_qb_pt
+
+        return loss, bce_diff, kl_div_qs_pb, sampled_kl_div_qb_pt, bce_optimal
 
 
 class TDVAEModel(BaseTDVAE):

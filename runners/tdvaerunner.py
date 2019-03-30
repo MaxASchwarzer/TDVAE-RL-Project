@@ -5,10 +5,10 @@ import numpy as np
 from pylego import misc
 
 from models.basetdvae import BaseTDVAE
-from .basemnist import MovingMNISTBaseRunner
+from .base_runner import BaseRunner
 
 
-class TDVAERunner(MovingMNISTBaseRunner):
+class TDVAERunner(BaseRunner):
 
     def __init__(self, flags, *args, **kwargs):
         super().__init__(flags, BaseTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'sampled_kl_div_qb_pt'])
