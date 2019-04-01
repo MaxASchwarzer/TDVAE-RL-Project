@@ -22,6 +22,7 @@ if __name__ == '__main__':
     arg(parser, 'force_logs', type=bool, default=False)
     arg(parser, 'optimizer', type=str, default='adam', help='one of: adam')
     arg(parser, 'learning_rate', type=float, default=5e-4, help='-1 to use model default')
+    arg(parser, 'beta', type=float, default=1, help='Parameter controlling KL loss scale')
     arg(parser, 'grad_norm', type=float, default=5.0, help='gradient norm clipping (-1 to disable)')
     arg(parser, 'seq_len', type=int, default=20, help='sequence length')
     arg(parser, 'batch_size', type=int, default=64, help='batch size')

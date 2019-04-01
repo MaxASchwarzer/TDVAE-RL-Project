@@ -9,32 +9,40 @@ import gym
 import gym_vecenv as vecenv
 from collections import deque
 from pylego.reader import Reader
+from multiprocessing import Process, Pipe, cpu_count
+
+def make_env(env_name, frameskip=3):
+    env = gym.make(env_name)
+    env.env.frameskip = frameskip
+    return env
 
 
 class GymReader(Reader):
 
     def __init__(self,
-                env,
-                batch_size,
-                seq_len,
-                iters_per_epoch,
-                done_policy=np.any):
+                 env,
+                 batch_size,
+                 seq_len,
+                 iters_per_epoch,
+                 done_policy=np.any):
 
-        fn = lambda : gym.make(env)
+        fn = lambda : make_env(env)
         env_fcns = [fn for i in range(batch_size)]
         self.batch_size = batch_size
         self.env_name = env
-        self.env = vecenv.SubprocVecEnv(env_fcns)
+        self.env = SubprocVecEnv(env_fcns, n_workers=cpu_count())
         self.env.reset()
         self.seq_len = seq_len
         self.sample_env = gym.make(env)
-        self.iters_per_epoch = iters_per_epoch
+        self.iters_per_epoch = {'train': iters_per_epoch,
+                                'val': int(iters_per_epoch*0.15),
+                                'test': int(iters_per_epoch*0.15)}
         self.iters = 0
         self.done = False
         self.buffers = [deque(maxlen=seq_len) for i in range(5)]
         self.done_policy = done_policy
 
-        super().__init__({'train': iters_per_epoch, 'val': iters_per_epoch//10, 'test': iters_per_epoch//10})
+        super().__init__(self.iters_per_epoch)
 
     def reset(self):
         self.iters = 0
@@ -56,21 +64,17 @@ class GymReader(Reader):
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
             actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
+
         for i in range(inner_frameskip):
             self.env.step_async(actions)
             obs, rewards, done, meta = self.env.step_wait()
             obs = np.transpose(obs, axes=(0, 3, 1, 2))
             obs = T.tensor(obs).float()/256
-            if self.env_name == "Pong-v0":
+            if "Pong" in self.env_name or "Seaquest" in self.env_name:
                 obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
-
 
             for i, val in enumerate([obs, actions, rewards, done, meta]):
                 self.buffers[i].append(val)
-            if self.done_policy(done):
-                self.env.reset()
-                for buffer in self.buffers:
-                  buffer.clear()
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
             return self.iter_batches(split_name, batch_size, actions=actions, shuffle=shuffle)
@@ -79,6 +83,125 @@ class GymReader(Reader):
 
         output = [o[:batch_size] for o in output]
         self.iters += 1
-        if self.iters > self.iters_per_epoch:
+        if self.iters > self.iters_per_epoch[split_name]:
             self.done = True
         return output
+
+# The following code is largely adapted from https://github.com/agakshat/gym_vecenv,
+# and carries the following license:
+# MIT License
+#
+# Copyright (c) 2018 Akshat Agarwal
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+
+def worker(remote, parent_remote, env_fn_wrappers):
+    parent_remote.close()
+    envs = [env_fn_wrapper.x() for env_fn_wrapper in env_fn_wrappers]
+    while True:
+        cmd, data = remote.recv()
+        if cmd == 'step':
+            obs = []; rewards = []; dones = []; infos = []
+            for env, action in zip(envs, data):
+                ob, reward, done, info = env.step(action)
+                if np.any(done):
+                    ob = env.reset()
+                obs.append(ob)
+                rewards.append(reward)
+                dones.append(done)
+                infos.append(info)
+            remote.send((np.stack(obs, 0), np.stack(rewards, 0), np.stack(dones, 0), np.stack(infos, 0)))
+        elif cmd == 'reset':
+            ob = [env.reset() for env in envs]
+            ob = np.stack(ob, 0)
+            remote.send(ob)
+        elif cmd == 'reset_task':
+            ob = [env.reset_task() for env in envs]
+            ob = np.stack(ob, 0)
+            remote.send(ob)
+        elif cmd == 'close':
+            remote.close()
+            break
+        elif cmd == 'get_spaces':
+            remote.send(([(env.observation_space, env.action_space) for env in envs]))
+        else:
+            raise NotImplementedError
+
+
+class SubprocVecEnv(vecenv.vec_env.VecEnv):
+    def __init__(self, env_fns, n_workers=-1, spaces=None):
+        """
+        envs: list of gym environments to run in subprocesses
+        """
+        self.waiting = False
+        self.closed = False
+        nenvs = len(env_fns)
+        self.n_workers = n_workers
+        if n_workers == -1:
+            self.n_workes = nenvs
+        env_fns = np.array_split(env_fns, n_workers)
+
+        self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(n_workers)])
+        self.ps = [Process(target=worker,
+                           args=(work_remote, remote, [vecenv.vec_env.CloudpickleWrapper(fn) for fn in env_fns]))
+                    for (work_remote, remote, env_fns) in zip(self.work_remotes, self.remotes, env_fns)]
+        for p in self.ps:
+            p.daemon = True # if the main process crashes, we should not cause things to hang
+            p.start()
+        for remote in self.work_remotes:
+            remote.close()
+
+        self.remotes[0].send(('get_spaces', None))
+        spaces = self.remotes[0].recv()
+        vecenv.vec_env.VecEnv.__init__(self, len(env_fns), spaces[0][0], spaces[0][1])
+
+    def step_async(self, actions):
+        actions = np.array_split(actions, self.n_workers)
+        for remote, action in zip(self.remotes, actions):
+            remote.send(('step', action))
+        self.waiting = True
+
+    def step_wait(self):
+        results = [remote.recv() for remote in self.remotes]
+        self.waiting = False
+        obs, rews, dones, infos = zip(*results)
+        return np.concatenate(obs, 0), np.concatenate(rews, 0), np.concatenate(dones, 0), infos
+
+    def reset(self):
+        for remote in self.remotes:
+            remote.send(('reset', None))
+        return np.concatenate([remote.recv() for remote in self.remotes], 0)
+
+    def reset_task(self):
+        for remote in self.remotes:
+            remote.send(('reset_task', None))
+        return np.concatenate([remote.recv() for remote in self.remotes], 0)
+
+    def close(self):
+        if self.closed:
+            return
+        if self.waiting:
+            for remote in self.remotes:
+                remote.recv()
+        for remote in self.remotes:
+            remote.send(('close', None))
+        for p in self.ps:
+            p.join()
+        self.closed = True
