@@ -106,7 +106,7 @@ class ConvDecoder(nn.Module):
                  blocks=None,
                  scale=[2, 2, 2, 2],
                  stride=[2, 2, 2, 2, 2],
-                 l_per_block=[2, 2, 2, 2, 2]):
+                 l_per_block=[4, 4, 4, 4, 4]):
         super().__init__()
 
         d_in = input_size[0]
@@ -346,7 +346,7 @@ class TDVAE(nn.Module):
             else:
                 p_z_b_mu, p_z_b_logvar = self.z_b[layer](torch.cat([b[:, layer], p_z_b], dim=1))
             p_z_b = ops.reparameterize_gaussian(p_z_b_mu, p_z_b_logvar, True)
-            p_z_bs.insert(0, p_z_b)
+            p_z_bs.insert(0, p_z_b_mu)
 
         z = torch.cat(p_z_bs, dim=1)
         rollout_x = []
@@ -366,7 +366,7 @@ class TDVAE(nn.Module):
                         inputs = torch.cat([z, pt_z2_z1, t_encodings], dim=1)
                     pt_z2_z1_mu, pt_z2_z1_logvar = self.z2_z1[layer](inputs)
                 pt_z2_z1 = ops.reparameterize_gaussian(pt_z2_z1_mu, pt_z2_z1_logvar, True)
-                next_z.insert(0, pt_z2_z1)
+                next_z.insert(0, pt_z2_z1_mu)
 
             z = torch.cat(next_z, dim=1)
             rollout_x.append(self.x_z(z))
@@ -377,20 +377,34 @@ class TDVAE(nn.Module):
 class GymTDVAE(BaseGymTDVAE):
 
     def __init__(self, flags, *args, **kwargs):
-        # XXX hardcoded for moving MNIST
+        self.device = torch.device("cuda" if flags.cuda else "cpu")
         model = TDVAE((3, 224, 160), flags.h_size, 64, flags.b_size, flags.z_size, flags.layers, flags.samples_per_seq,
                                flags.t_diff_min, flags.t_diff_max, action_space=20)
-        super().__init__(model, flags, *args, **kwargs)
-        self.device = torch.device("cuda" if flags.cuda else "cpu")
         if flags.adversarial:
             self.dnet = Discriminator(3, d_size=flags.d_size)
-            self.dnet.to(self.device)
             self.adversarial_optim = torch.optim.Adam(self.dnet.parameters(), lr=flags.d_lr, betas=(0.0, 0.9))
-            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=flags.learning_rate, betas=(0.0, 0.9))
+            self.optimizer = torch.optim.Adam(model.parameters(), lr=flags.learning_rate, betas=(0.0, 0.9))
+            flags.optimizer = self.optimizer
         self.adversarial = flags.adversarial
         self.beta = flags.beta
         self.d_weight = flags.d_weight
         self.d_steps = flags.d_steps
+
+        super().__init__(model, flags, *args, **kwargs)
+
+        if self.adversarial:
+            self.dnet.to(self.device)
+            self.model.to(self.device)
+
+            for state in self.adversarial_optim.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.cuda()
+
+            for state in self.optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.cuda()
 
     def loss_function(self, forward_ret, labels=None, train=True):
         (x, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu, qb_z2_b2_logvar,
