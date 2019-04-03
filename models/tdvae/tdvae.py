@@ -4,11 +4,14 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
+import glob
+import pathlib
 
 from pylego import ops
 
 from ..basetdvae import BaseTDVAE
 from ..gymtdvae import BaseGymTDVAE
+from .adversarial import Discriminator
 
 
 class DBlock(nn.Module):
@@ -158,6 +161,7 @@ class Decoder(nn.Module):
         t = torch.tanh(self.fc2(t))
         p = torch.sigmoid(self.fc3(t))
         return p
+
 
 
 class TDVAE(nn.Module):
@@ -374,19 +378,41 @@ class GymTDVAE(BaseGymTDVAE):
 
     def __init__(self, flags, *args, **kwargs):
         # XXX hardcoded for moving MNIST
-        super().__init__(TDVAE((3, 224, 160), 8, 64, flags.b_size, flags.z_size, flags.layers, flags.samples_per_seq,
-                               flags.t_diff_min, flags.t_diff_max, action_space=20), flags, *args, **kwargs)
+        model = TDVAE((3, 224, 160), flags.h_size, 64, flags.b_size, flags.z_size, flags.layers, flags.samples_per_seq,
+                               flags.t_diff_min, flags.t_diff_max, action_space=20)
+        super().__init__(model, flags, *args, **kwargs)
+        self.device = torch.device("cuda" if flags.cuda else "cpu")
+        if flags.adversarial:
+            self.dnet = Discriminator(3, d_size=flags.d_size)
+            self.dnet.to(self.device)
+            self.adversarial_optim = torch.optim.Adam(self.dnet.parameters(), lr=flags.d_lr, betas=(0.0, 0.9))
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=flags.learning_rate, betas=(0.0, 0.9))
+        self.adversarial = flags.adversarial
         self.beta = flags.beta
+        self.d_weight = flags.d_weight
+        self.d_steps = flags.d_steps
 
-    def loss_function(self, forward_ret, labels=None):
+    def loss_function(self, forward_ret, labels=None, train=True):
         (x, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu, qb_z2_b2_logvar,
          qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2) = forward_ret
 
         # replicate x multiple times
-        x = x.flatten(2, -1)
-        x = x.expand(self.flags.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
-        x2 = torch.gather(x, 2, t2[..., None, None].expand(-1, -1, -1, x.size(3))).view(-1, x.size(3))
+        x_flat = x.flatten(2, -1)
+        x_flat = x_flat.expand(self.flags.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
+        x2 = torch.gather(x_flat, 2, t2[..., None, None].expand(-1, -1, -1, x_flat.size(3))).view(-1, x_flat.size(3))
         batch_size = x2.size(0)
+
+        if self.adversarial and self.model.training:
+            r_in = x2.view(x2.shape[0], x.shape[2], x.shape[3], x.shape[4])
+            f_in = pd_x2_z2.view(x2.shape[0], x.shape[2], x.shape[3], x.shape[4])
+            for i in range(self.d_steps):
+                d_loss, g_loss = self.dnet.calc_loss(r_in, f_in)
+                d_loss.backward(retain_graph=True)
+                # print(d_loss, g_loss)
+                self.adversarial_optim.step()
+                self.adversarial_optim.zero_grad()
+        else:
+            g_loss = 0
 
         kl_div_qs_pb = ops.kl_div_gaussian(qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar).mean()
 
@@ -396,10 +422,43 @@ class GymTDVAE(BaseGymTDVAE):
         bce = F.binary_cross_entropy(pd_x2_z2, x2, reduction='sum') / batch_size
         bce_optimal = F.binary_cross_entropy(x2, x2, reduction='sum') / batch_size
         bce_diff = bce - bce_optimal
-
-        loss = bce_diff + self.beta*kl_div_qs_pb + self.beta*sampled_kl_div_qb_pt
+        loss = bce_diff + self.d_weight*g_loss + self.beta*kl_div_qs_pb + self.beta*sampled_kl_div_qb_pt
 
         return loss, bce_diff, kl_div_qs_pb, sampled_kl_div_qb_pt, bce_optimal
+
+    def load(self, load_file):
+        """Load a model from a saved file."""
+        print("* Loading model from", load_file, "...")
+        m_state_dict, o_state_dict, train_steps = torch.load(load_file)
+        self.model.load_state_dict(m_state_dict)
+        self.optimizer.load_state_dict(o_state_dict)
+        self.train_steps = train_steps
+        if self.adversarial:
+            m_state_dict, o_state_dict = torch.load(load_file+"disc")
+            self.dnet.load_state_dict(m_state_dict)
+            self.adversarial_optim.load_state_dict(o_state_dict)
+        print("* Loaded model from", load_file)
+
+    def save(self, save_file, max_files=5):
+        "Save model to file."
+        save_fname = save_file + "." + str(self.train_steps)
+        print("* Saving model to", save_fname, "...")
+        existing = glob.glob(save_file + ".*")
+        pairs = [(f.rsplit('.', 1)[-1], f) for f in existing]
+        pairs = sorted([(int(k), f) for k, f in pairs if k.isnumeric()], reverse=True)
+        for _, fname in pairs[max_files - 1:]:
+            pathlib.Path(fname).unlink()
+
+        save_objs = [self.model.state_dict(), self.optimizer.state_dict(), self.train_steps]
+        torch.save(save_objs, save_fname)
+
+        if self.adversarial:
+            save_objs = [self.dnet.state_dict(), self.adversarial_optim.state_dict()]
+            torch.save(save_objs, save_fname+"disc")
+
+
+
+        print("* Saved model to", save_fname)
 
 
 class TDVAEModel(BaseTDVAE):

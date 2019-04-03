@@ -16,6 +16,8 @@ class GymRunner(BaseRunner):
     def __init__(self, flags, *args, **kwargs):
         super().__init__(flags, BaseGymTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'sampled_kl_div_qb_pt'])
         self.maxlen = flags.seq_len
+        self.adv_start = flags.d_start
+        self.d_weight = flags.d_weight
 
     def run_batch(self, batch, train=False):
         images, actions = self.model.prepare_batch(batch[0:2])
@@ -47,15 +49,14 @@ class GymRunner(BaseRunner):
         return vis_data, (bs, seq_len)
 
     def post_epoch_visualize(self, epoch, split):
-        if split != 'train':
-            print('* Visualizing', split)
-            vis_data, aspect = self._visualize_split(split, min(10, self.maxlen - 1), 5)
-            if split == 'test':
-                fname = self.flags.log_dir + '/test.png'
-            else:
-                fname = self.flags.log_dir + '/val%03d.png' % epoch
-            misc.save_comparison_grid(fname, vis_data, rows_cols=aspect, border_shade=1.0, retain_sequence=True)
-            print('* Visualizations saved to', fname)
+        print('* Visualizing', split)
+        vis_data, aspect = self._visualize_split(split, min(10, self.maxlen - 1), 5)
+        if split == 'test':
+            fname = self.flags.log_dir + '/test.png'
+        else:
+            fname = self.flags.log_dir + '/{}'.format(split) + '%03d.png' % epoch
+        misc.save_comparison_grid(fname, vis_data, rows_cols=aspect, border_shade=1.0, retain_sequence=True)
+        print('* Visualizations saved to', fname)
 
         if split == 'test':
             print('* Generating more visualizations for', split)
@@ -72,6 +73,10 @@ class GymRunner(BaseRunner):
 
         timestamp = time.time()
         i = 0
+        if epoch > self.adv_start:
+            self.model.d_weight = self.d_weight
+        else:
+            self.model.d_weight = 0
         while not self.reader.done:
             i += 1
             batch = self.reader.iter_batches(split, self.batch_size, shuffle=train,
