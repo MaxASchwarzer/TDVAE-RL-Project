@@ -1,15 +1,14 @@
-"""Some parts adapted from the TD-VAE code by Xinqiang Ding <xqding@umich.edu>."""
+from collections import deque
+from multiprocessing import Process, Pipe, cpu_count
 
-import numpy as np
-import torch as T
-from torch.utils import data
-from torchvision import datasets
-import torch.nn.functional as F
 import gym
 import gym_vecenv as vecenv
-from collections import deque
+import numpy as np
+import torch
+import torch.nn.functional as F
+
 from pylego.reader import Reader
-from multiprocessing import Process, Pipe, cpu_count
+
 
 def make_env(env_name, frameskip=3):
     env = gym.make(env_name)
@@ -26,7 +25,7 @@ class GymReader(Reader):
                  iters_per_epoch,
                  done_policy=np.any):
 
-        fn = lambda : make_env(env)
+        fn = lambda: make_env(env)
         env_fcns = [fn for i in range(batch_size)]
         self.batch_size = batch_size
         self.env_name = env
@@ -69,7 +68,7 @@ class GymReader(Reader):
             self.env.step_async(actions)
             obs, rewards, done, meta = self.env.step_wait()
             obs = np.transpose(obs, axes=(0, 3, 1, 2))
-            obs = T.tensor(obs).float()/256
+            obs = torch.tensor(obs).float()/256
             if "Pong" in self.env_name or "Seaquest" in self.env_name:
                 obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
 
@@ -79,13 +78,15 @@ class GymReader(Reader):
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
             return self.iter_batches(split_name, batch_size, actions=actions, shuffle=shuffle)
 
-        output = [T.stack(list(self.buffers[0]), 1)] + [np.array(buffer).swapaxes(0, 1) for buffer in self.buffers[1:]]
+        output = [torch.stack(list(self.buffers[0]), 1)] + [np.array(buffer).swapaxes(0, 1)
+                                   for buffer in self.buffers[1:]]
 
         output = [o[:batch_size] for o in output]
         self.iters += 1
         if self.iters > self.iters_per_epoch[split_name]:
             self.done = True
         return output
+
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,
 # and carries the following license:
@@ -111,14 +112,13 @@ class GymReader(Reader):
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-
 def worker(remote, parent_remote, env_fn_wrappers):
     parent_remote.close()
     envs = [env_fn_wrapper.x() for env_fn_wrapper in env_fn_wrappers]
     while True:
         cmd, data = remote.recv()
         if cmd == 'step':
-            obs = []; rewards = []; dones = []; infos = []
+            obs, rewards, dones, infos = [], [], [], []
             for env, action in zip(envs, data):
                 ob, reward, done, info = env.step(action)
                 if np.any(done):
@@ -161,7 +161,7 @@ class SubprocVecEnv(vecenv.vec_env.VecEnv):
         self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(n_workers)])
         self.ps = [Process(target=worker,
                            args=(work_remote, remote, [vecenv.vec_env.CloudpickleWrapper(fn) for fn in env_fns]))
-                    for (work_remote, remote, env_fns) in zip(self.work_remotes, self.remotes, env_fns)]
+                   for (work_remote, remote, env_fns) in zip(self.work_remotes, self.remotes, env_fns)]
         for p in self.ps:
             p.daemon = True # if the main process crashes, we should not cause things to hang
             p.start()
