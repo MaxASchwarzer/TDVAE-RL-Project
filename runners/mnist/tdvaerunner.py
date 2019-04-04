@@ -4,25 +4,25 @@ import numpy as np
 
 from pylego import misc
 
-from models.basetdvae import BaseTDVAE
-from .base_runner import BaseRunner
+from models.baseimgtdvae import BaseImageTDVAE
+from .basemnist import MovingMNISTBaseRunner
 
 
-class TDVAERunner(BaseRunner):
+class TDVAERunner(MovingMNISTBaseRunner):
 
     def __init__(self, flags, *args, **kwargs):
-        super().__init__(flags, BaseTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'sampled_kl_div_qb_pt'])
+        super().__init__(flags, BaseImageTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'kl_shift_qb_pt'])
 
     def run_batch(self, batch, train=False):
         batch = self.model.prepare_batch(batch)
-        loss, bce_diff, kl_div_qs_pb, sampled_kl_div_qb_pt, bce_optimal = self.model.run_loss(batch)
+        loss, bce_diff, kl_div_qs_pb, kl_shift_qb_pt, bce_optimal = self.model.run_loss(batch)
         if train:
             self.model.train(loss, clip_grad_norm=self.flags.grad_norm)
 
         return collections.OrderedDict([('loss', loss.item()),
                                         ('bce_diff', bce_diff.item()),
                                         ('kl_div_qs_pb', kl_div_qs_pb.item()),
-                                        ('sampled_kl_div_qb_pt', sampled_kl_div_qb_pt.item()),
+                                        ('kl_shift_qb_pt', kl_shift_qb_pt.item()),
                                         ('bce_optimal', bce_optimal.item())])
 
     def _visualize_split(self, split, t, n):
@@ -36,22 +36,22 @@ class TDVAERunner(BaseRunner):
         out = out.cpu().numpy()
         vis_data = np.concatenate([batch, out], axis=1)
         bs, seq_len = vis_data.shape[:2]
-        return vis_data.reshape([bs * seq_len, 1, 28, 28]), seq_len / bs
+        return vis_data.reshape([bs * seq_len, 1, 28, 28]), (bs, seq_len)
 
     def post_epoch_visualize(self, epoch, split):
         if split != 'train':
             print('* Visualizing', split)
-            vis_data, aspect = self._visualize_split(split, 10, 5)
+            vis_data, rows_cols = self._visualize_split(split, 10, 5)
             if split == 'test':
                 fname = self.flags.log_dir + '/test.png'
             else:
                 fname = self.flags.log_dir + '/val%03d.png' % epoch
-            misc.save_comparison_grid(fname, vis_data, desired_aspect=aspect, border_shade=1.0)
+            misc.save_comparison_grid(fname, vis_data, border_shade=1.0, rows_cols=rows_cols, retain_sequence=True)
             print('* Visualizations saved to', fname)
 
         if split == 'test':
             print('* Generating more visualizations for', split)
-            vis_data, aspect = self._visualize_split(split, 0, 15)
+            vis_data, rows_cols = self._visualize_split(split, 0, 15)
             fname = self.flags.log_dir + '/test_more.png'
-            misc.save_comparison_grid(fname, vis_data, desired_aspect=aspect, border_shade=1.0)
+            misc.save_comparison_grid(fname, vis_data, border_shade=1.0, rows_cols=rows_cols, retain_sequence=True)
             print('* More visualizations saved to', fname)
