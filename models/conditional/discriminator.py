@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from torch.nn import functional as F
+
 
 class Discriminator(torch.nn.Module):
     def __init__(self, channels, d_size=16):
@@ -93,4 +93,3 @@ class Discriminator(torch.nn.Module):
         d_loss = 10*d_loss_gp + d_loss
 
         return d_loss, g_loss
-
