@@ -3,13 +3,14 @@ import os
 
 from pylego.misc import add_argument as arg
 
-from runners.tdvaerunner import TDVAERunner
-from runners.gym_runner import GymRunner
+from runners.mnist.tdvaerunner import TDVAERunner
+from runners.conditional.gym_runner import GymRunner
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     arg(parser, 'name', type=str, required=True, help='name of the experiment')
-    arg(parser, 'model', type=str, default='tdvae.vaemodel', help='model to use')
+    arg(parser, 'model', type=str, default='tdvae.vaemodel', help='model to use')  # FIXME
     arg(parser, 'cuda', type=bool, default=True, help='enable CUDA')
     arg(parser, 'load_file', type=str, default='', help='file to load model from')
     arg(parser, 'save_file', type=str, default='model.dat', help='model save file')
@@ -81,8 +82,8 @@ if __name__ == '__main__':
 
     flags.save_file = flags.log_dir + '/' + flags.save_file
 
-    # if "gym" in flags.model and "tdvae" in flags.model:
-    runner = GymRunner
-    # elif flags.model.startswith('tdvae.'):
-    #     runner = TDVAERunner
+    if flags.model.startswith('gymvae.') or True:  # FIXME
+        runner = GymRunner
+    elif flags.model.startswith('tdvae.'):
+        runner = TDVAERunner
     runner(flags).run(visualize_only=flags.visualize_only, visualize_split=flags.visualize_split)

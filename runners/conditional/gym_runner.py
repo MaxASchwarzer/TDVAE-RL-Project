@@ -7,14 +7,14 @@ from tensorboardX import SummaryWriter
 
 from pylego import misc, runner
 
-from models.gymtdvae import BaseGymTDVAE
+from models.baseconditional import BaseGymTDVAE
 from .base_runner import BaseRunner
 
 
 class GymRunner(BaseRunner):
 
     def __init__(self, flags, *args, **kwargs):
-        super().__init__(flags, BaseGymTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'sampled_kl_div_qb_pt'])
+        super().__init__(flags, BaseGymTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'kl_shift_qb_pt'])
         self.maxlen = flags.seq_len
         self.adv_start = flags.d_start
         self.d_weight = flags.d_weight
@@ -22,14 +22,14 @@ class GymRunner(BaseRunner):
     def run_batch(self, batch, train=False):
         images, actions = self.model.prepare_batch(batch[0:2])
         images = images.contiguous()
-        loss, bce_diff, kl_div_qs_pb, sampled_kl_div_qb_pt, bce_optimal = self.model.run_loss((images, actions))
+        loss, bce_diff, kl_div_qs_pb, kl_shift_qb_pt, bce_optimal = self.model.run_loss((images, actions))
         if train:
             self.model.train(loss, clip_grad_norm=self.flags.grad_norm)
 
         return collections.OrderedDict([('loss', loss.item()),
                                         ('bce_diff', bce_diff.item()),
                                         ('kl_div_qs_pb', kl_div_qs_pb.item()),
-                                        ('sampled_kl_div_qb_pt', sampled_kl_div_qb_pt.item()),
+                                        ('kl_shift_qb_pt', kl_shift_qb_pt.item()),
                                         ('bce_optimal', bce_optimal.item())])
 
     def _visualize_split(self, split, t, n):
