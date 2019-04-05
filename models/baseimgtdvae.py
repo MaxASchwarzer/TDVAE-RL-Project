@@ -1,7 +1,7 @@
 from pylego.model import Model
 
 
-class BaseTDVAE(Model):
+class BaseImageTDVAE(Model):
 
     def __init__(self, model, flags, *args, **kwargs):
         self.flags = flags
