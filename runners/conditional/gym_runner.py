@@ -1,11 +1,7 @@
 import collections
-import time
-from abc import ABC, abstractmethod
 import numpy as np
 
-from tensorboardX import SummaryWriter
-
-from pylego import misc, runner
+from pylego import misc
 
 from models.baseconditional import BaseGymTDVAE
 from .base_runner import BaseRunner
@@ -20,9 +16,9 @@ class GymRunner(BaseRunner):
         self.d_weight = flags.d_weight
 
     def run_batch(self, batch, train=False):
-        images, actions = self.model.prepare_batch(batch[0:2])
-        images = images.contiguous()
-        loss, bce_diff, kl_div_qs_pb, kl_shift_qb_pt, bce_optimal = self.model.run_loss((images, actions))
+        images, actions = self.model.prepare_batch(batch.get_next()[:2])
+        # images = images.contiguous()  # FIXME
+        loss, bce_diff, kl_div_qs_pb, kl_shift_qb_pt, bce_optimal = self.model.run_loss([images, actions])
         if train:
             self.model.train(loss, clip_grad_norm=self.flags.grad_norm)
 
@@ -34,8 +30,8 @@ class GymRunner(BaseRunner):
 
     def _visualize_split(self, split, t, n):
         bs = min(self.batch_size, 15)
-        batch = self.reader.iter_batches(split, bs, shuffle=True, partial_batching=True, threads=self.threads,
-                                              max_batches=1)
+        batch = next(self.reader.iter_batches(split, bs, shuffle=True, partial_batching=True, threads=self.threads,
+                                              max_batches=1))
         images = batch[0]
         actions = batch[1]
         images, actions = self.model.prepare_batch([images[:, :t + 2], actions[:, :t+2]])
@@ -64,54 +60,3 @@ class GymRunner(BaseRunner):
             fname = self.flags.log_dir + '/test_more.png'
             misc.save_comparison_grid(fname, vis_data, rows_cols=aspect, border_shade=1.0, retain_sequence=True)
             print('* More visualizations saved to', fname)
-
-    def run_epoch(self, epoch, split, train=False, log=True):
-        """Iterates the epoch data for a specific split."""
-        print('\n* Starting epoch %d, split %s' % (epoch, split), '(train: ' + str(train) + ')')
-        self.reset_epoch_reports()
-        self.model.set_train(train)
-
-        timestamp = time.time()
-        i = 0
-        if epoch > self.adv_start:
-            self.model.d_weight = self.d_weight
-        else:
-            self.model.d_weight = 0
-        while not self.reader.done:
-            i += 1
-            batch = self.reader.iter_batches(split, self.batch_size, shuffle=train,
-                                             partial_batching=not train, threads=self.threads)
-            ret_report = self.run_batch(batch, train=train)
-            if not ret_report:
-                report = collections.OrderedDict()
-            elif not isinstance(ret_report, collections.OrderedDict):
-                report = collections.OrderedDict()
-                for k in sorted(ret_report.keys()):
-                    report[k] = ret_report[k]
-            else:
-                report = ret_report
-
-            report['time_'] = time.time() - timestamp
-            if train:
-                self.log_train_report(report, self.model.get_train_steps())
-            self.epoch_reports.append(report)
-            if self.print_every > 0 and i % self.print_every == 0:
-                self.print_report(epoch, report, step=i)
-            if train and self.visualize_every > 0 and self.model.get_train_steps() % self.visualize_every == 0:
-                self.model.set_train(False)
-                self.train_visualize()
-                self.model.set_train(True)
-
-            timestamp = time.time()
-
-        epoch_report = self.get_epoch_report()
-        self.print_report(epoch, epoch_report)
-        if train:
-            self.log_epoch_train_report(epoch_report, self.model.get_train_steps())
-        elif log:
-            self.log_epoch_val_report(epoch_report, self.model.get_train_steps())
-
-        self.model.set_train(False)
-        self.post_epoch_visualize(epoch, split)
-
-        self.reader.reset()

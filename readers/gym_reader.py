@@ -36,7 +36,7 @@ class ActionConditionalBatch:  # move generalized form of this to pylego
             # We have to assume a random policy if nobody gives us actions
             actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
 
-        for i in range(inner_frameskip):
+        for _ in range(inner_frameskip):
             self.env.step_async(actions)
             obs, rewards, done, meta = self.env.step_wait()
             obs = np.transpose(obs, axes=(0, 3, 1, 2))
@@ -44,14 +44,14 @@ class ActionConditionalBatch:  # move generalized form of this to pylego
             if "Pong" in self.env_name or "Seaquest" in self.env_name:
                 obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
 
-            for j, val in enumerate([obs, actions, rewards, done, meta]):
-                self.buffers[j].append(val)
+            for i, val in enumerate([obs, actions, rewards, done, meta]):
+                self.buffers[i].append(val)
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
             return self.get_next(actions=actions, shuffle=shuffle, fill_buffer=True, inner_frameskip=inner_frameskip)
 
         output = [torch.stack(list(self.buffers[0]), 1)] + [np.array(buffer).swapaxes(0, 1)
-                                   for buffer in self.buffers[1:]]
+                                                            for buffer in self.buffers[1:]]
 
         output = [o[:self.batch_size] for o in output]
         return output
