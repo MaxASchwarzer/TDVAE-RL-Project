@@ -10,7 +10,7 @@ from runners.conditional.gym_runner import GymRunner
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     arg(parser, 'name', type=str, required=True, help='name of the experiment')
-    arg(parser, 'model', type=str, default='tdvae.vaemodel', help='model to use')  # FIXME
+    arg(parser, 'model', type=str, default='conditional.gymtdvae', help='model to use')
     arg(parser, 'cuda', type=bool, default=True, help='enable CUDA')
     arg(parser, 'load_file', type=str, default='', help='file to load model from')
     arg(parser, 'save_file', type=str, default='model.dat', help='model save file')
@@ -82,7 +82,7 @@ if __name__ == '__main__':
 
     flags.save_file = flags.log_dir + '/' + flags.save_file
 
-    if flags.model.startswith('gymvae.') or True:  # FIXME
+    if flags.model.startswith('conditional.'):
         runner = GymRunner
     elif flags.model.startswith('tdvae.'):
         runner = TDVAERunner

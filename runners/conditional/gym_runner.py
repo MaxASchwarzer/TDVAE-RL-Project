@@ -115,4 +115,3 @@ class GymRunner(BaseRunner):
         self.post_epoch_visualize(epoch, split)
 
         self.reader.reset()
-

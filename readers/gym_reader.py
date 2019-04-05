@@ -1,5 +1,5 @@
 from collections import deque
-from multiprocessing import Process, Pipe, cpu_count
+from multiprocessing import Process, Pipe
 
 import gym
 import gym_vecenv as vecenv
@@ -16,50 +16,22 @@ def make_env(env_name, frameskip=3):
     return env
 
 
-class GymReader(Reader):
+class ActionConditionalBatch:  # move generalized form of this to pylego
 
-    def __init__(self,
-                 env,
-                 batch_size,
-                 seq_len,
-                 iters_per_epoch,
-                 done_policy=np.any):
+    def __init__(self, env, seq_len, batch_size, threads, shuffle):
+        self.env_name = env
+        self.seq_len = seq_len
+        self.batch_size = batch_size
+        self.shuffle = shuffle
 
         fn = lambda: make_env(env)
         env_fcns = [fn for i in range(batch_size)]
-        self.batch_size = batch_size
-        self.env_name = env
-        self.env = SubprocVecEnv(env_fcns, n_workers=cpu_count())
+        self.env = SubprocVecEnv(env_fcns, n_workers=threads)
         self.env.reset()
-        self.seq_len = seq_len
         self.sample_env = gym.make(env)
-        self.iters_per_epoch = {'train': iters_per_epoch,
-                                'val': int(iters_per_epoch*0.15),
-                                'test': int(iters_per_epoch*0.15)}
-        self.iters = 0
-        self.done = False
         self.buffers = [deque(maxlen=seq_len) for i in range(5)]
-        self.done_policy = done_policy
 
-        super().__init__(self.iters_per_epoch)
-
-    def reset(self):
-        self.iters = 0
-        self.done = False
-        self.env.reset()
-
-    def iter_batches(self,
-                     split_name,
-                     batch_size,
-                     actions=None,
-                     shuffle=True,
-                     partial_batching=False,
-                     threads=1,
-                     epochs=1,
-                     fill_buffer=True,
-                     max_batches=-1,
-                     inner_frameskip=10):
-
+    def get_next(self, actions=None, shuffle=True, fill_buffer=True, inner_frameskip=10):
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
             actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
@@ -68,24 +40,37 @@ class GymReader(Reader):
             self.env.step_async(actions)
             obs, rewards, done, meta = self.env.step_wait()
             obs = np.transpose(obs, axes=(0, 3, 1, 2))
-            obs = torch.tensor(obs).float()/256
+            obs = torch.tensor(obs).float() / 256
             if "Pong" in self.env_name or "Seaquest" in self.env_name:
                 obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
 
-            for i, val in enumerate([obs, actions, rewards, done, meta]):
-                self.buffers[i].append(val)
+            for j, val in enumerate([obs, actions, rewards, done, meta]):
+                self.buffers[j].append(val)
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
-            return self.iter_batches(split_name, batch_size, actions=actions, shuffle=shuffle)
+            return self.get_next(actions=actions, shuffle=shuffle, fill_buffer=True, inner_frameskip=inner_frameskip)
 
         output = [torch.stack(list(self.buffers[0]), 1)] + [np.array(buffer).swapaxes(0, 1)
                                    for buffer in self.buffers[1:]]
 
-        output = [o[:batch_size] for o in output]
-        self.iters += 1
-        if self.iters > self.iters_per_epoch[split_name]:
-            self.done = True
+        output = [o[:self.batch_size] for o in output]
         return output
+
+
+class GymReader(Reader):
+
+    def __init__(self, env, seq_len, iters_per_epoch):
+        self.env = env
+        self.seq_len = seq_len
+        super().__init__({'train': iters_per_epoch,
+                          'val': int(iters_per_epoch * 0.15),
+                          'test': int(iters_per_epoch * 0.15)})
+
+    def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
+                     max_batches=-1):
+        action_conditional_batch = ActionConditionalBatch(self.env, self.seq_len, batch_size, threads, shuffle)
+        for _ in range(epochs * min(max_batches, self.splits[split_name])):
+            yield action_conditional_batch
 
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,

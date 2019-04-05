@@ -9,10 +9,7 @@ class BaseRunner(runner.Runner):
 
     def __init__(self, flags, model_class, log_keys, *args, **kwargs):
         self.flags = flags
-        if "mnist" in flags.data.lower():
-            reader = MovingMNISTReader(flags.data_path, seq_len=flags.seq_len)
-        elif "gym" in flags.data.lower():
-            reader = GymReader(flags.env, flags.batch_size, flags.seq_len, flags.iters_per_epoch)
+        reader = GymReader(flags.env, flags.batch_size, flags.seq_len, flags.iters_per_epoch)
 
         summary_dir = flags.log_dir + '/summary'
         super().__init__(reader, flags.batch_size, flags.epochs, summary_dir, log_keys=log_keys,
