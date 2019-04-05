@@ -16,7 +16,7 @@ def make_env(env_name, frameskip=3):
     return env
 
 
-class ActionConditionalBatch:  # move generalized form of this to pylego
+class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
     def __init__(self, env, seq_len, batch_size, threads, shuffle):
         self.env_name = env
@@ -57,7 +57,7 @@ class ActionConditionalBatch:  # move generalized form of this to pylego
         return output
 
 
-class GymReader(Reader):
+class GymReader(Reader):  # TODO move generalized form of this to pylego
 
     def __init__(self, env, seq_len, iters_per_epoch):
         self.env = env
