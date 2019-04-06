@@ -1,12 +1,10 @@
 import collections
 import time
-from abc import ABC, abstractmethod
 import numpy as np
 
 from tensorboardX import SummaryWriter
 
-from pylego import misc, runner
-
+from pylego import misc
 from models.gymtdvae import BaseGymTDVAE
 from .base_runner import BaseRunner
 
@@ -50,7 +48,7 @@ class GymRunner(BaseRunner):
 
     def post_epoch_visualize(self, epoch, split):
         print('* Visualizing', split)
-        vis_data, aspect = self._visualize_split(split, min(10, self.maxlen - 1), 5)
+        vis_data, aspect = self._visualize_split(split, min(10, self.maxlen - 1), 1)
         if split == 'test':
             fname = self.flags.log_dir + '/test.png'
         else:
@@ -60,7 +58,7 @@ class GymRunner(BaseRunner):
 
         if split == 'test':
             print('* Generating more visualizations for', split)
-            vis_data, aspect = self._visualize_split(split, min(10, self.maxlen - 1), 5)
+            vis_data, aspect = self._visualize_split(split, min(10, self.maxlen - 1), 1)
             fname = self.flags.log_dir + '/test_more.png'
             misc.save_comparison_grid(fname, vis_data, rows_cols=aspect, border_shade=1.0, retain_sequence=True)
             print('* More visualizations saved to', fname)

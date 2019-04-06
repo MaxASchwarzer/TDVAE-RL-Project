@@ -11,7 +11,7 @@ from pylego import ops
 
 from ..basetdvae import BaseTDVAE
 from ..gymtdvae import BaseGymTDVAE
-from .adversarial import Discriminator
+from .adversarial import Discriminator, SAGANGenerator
 
 
 class DBlock(nn.Module):
@@ -57,10 +57,9 @@ class ConvPreProcess(nn.Module):
                  d_hidden,
                  d_out,
                  blocks=None,
-                 n_blocks=5,
-                 scale=[2, 2, 2, 2],
-                 stride=[2, 2, 2, 2, 2],
-                 l_per_block=[2, 2, 2, 2, 2]):
+                 scale=[2, 2, 2],
+                 stride=[2, 2, 2, 2],
+                 l_per_block=[2, 2, 2, 2]):
         super().__init__()
 
         d_in = input_size[0]
@@ -128,7 +127,7 @@ class ConvDecoder(nn.Module):
         self.fc2 = nn.Linear(d_out*4, self.total_size)
         self.bn2 = nn.BatchNorm2d(blocks[-1][1])
 
-        self.resnet = ops.ResNet(blocks[-1][1], list(reversed(blocks)), skip_last_norm=True)
+        self.resnet = ops.ResNet(blocks[-1][1], list(reversed(blocks)), skip_last_norm=False)
 
         self.final = nn.Conv2d(d_hidden, d_in, 7, 1, 3)
 
@@ -141,8 +140,7 @@ class ConvDecoder(nn.Module):
         x2 = x2.view(x.shape[0], x2.shape[1]//np.prod(self.final_shape), self.final_shape[0], self.final_shape[1])
         x2 = self.bn2(x2)
         x3 = self.resnet(x2)
-        x3 = self.final(x3)
-        x4 = x3 + self.biases
+        x4 = self.final(x3)
         return torch.sigmoid(x4.flatten(1, -1))
 
 
@@ -161,7 +159,6 @@ class Decoder(nn.Module):
         t = torch.tanh(self.fc2(t))
         p = torch.sigmoid(self.fc3(t))
         return p
-
 
 
 class TDVAE(nn.Module):
@@ -215,7 +212,7 @@ class TDVAE(nn.Module):
                                     for layer in range(layers)])
 
         # state to observation
-        self.x_z = ConvDecoder(layers * z_size, resnet_hidden_size, x_size)
+        self.x_z = SAGANGenerator(x_size, z_dim=layers * z_size, d_hidden=resnet_hidden_size)
 
         self.action_embedding = nn.Embedding(action_space, action_dim)
 
@@ -350,7 +347,8 @@ class TDVAE(nn.Module):
 
         z = torch.cat(p_z_bs, dim=1)
         rollout_x = []
-        for i in range(n):
+        rollout_x.append(self.x_z(z))
+        for i in range(n-1):
             next_z = []
             for layer in range(self.layers - 1, -1, -1):
                 if layer == self.layers - 1:
@@ -381,7 +379,7 @@ class GymTDVAE(BaseGymTDVAE):
         model = TDVAE((3, 224, 160), flags.h_size, 64, flags.b_size, flags.z_size, flags.layers, flags.samples_per_seq,
                                flags.t_diff_min, flags.t_diff_max, action_space=20)
         if flags.adversarial:
-            self.dnet = Discriminator(3, d_size=flags.d_size)
+            self.dnet = Discriminator(disc_size=flags.d_size, channels=3)
             self.adversarial_optim = torch.optim.Adam(self.dnet.parameters(), lr=flags.d_lr, betas=(0.0, 0.9))
             self.optimizer = torch.optim.Adam(model.parameters(), lr=flags.learning_rate, betas=(0.0, 0.9))
             flags.optimizer = self.optimizer
@@ -415,19 +413,6 @@ class GymTDVAE(BaseGymTDVAE):
         x_flat = x_flat.expand(self.flags.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
         x2 = torch.gather(x_flat, 2, t2[..., None, None].expand(-1, -1, -1, x_flat.size(3))).view(-1, x_flat.size(3))
         batch_size = x2.size(0)
-
-        if self.adversarial and self.model.training:
-            r_in = x2.view(x2.shape[0], x.shape[2], x.shape[3], x.shape[4])
-            f_in = pd_x2_z2.view(x2.shape[0], x.shape[2], x.shape[3], x.shape[4])
-            for i in range(self.d_steps):
-                d_loss, g_loss = self.dnet.calc_loss(r_in, f_in)
-                d_loss.backward(retain_graph=True)
-                # print(d_loss, g_loss)
-                self.adversarial_optim.step()
-                self.adversarial_optim.zero_grad()
-        else:
-            g_loss = 0
-
         kl_div_qs_pb = ops.kl_div_gaussian(qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar).mean()
 
         sampled_kl_div_qb_pt = (ops.gaussian_log_prob(qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2) -
@@ -436,7 +421,23 @@ class GymTDVAE(BaseGymTDVAE):
         bce = F.binary_cross_entropy(pd_x2_z2, x2, reduction='sum') / batch_size
         bce_optimal = F.binary_cross_entropy(x2, x2, reduction='sum') / batch_size
         bce_diff = bce - bce_optimal
-        loss = bce_diff + self.d_weight*g_loss + self.beta*kl_div_qs_pb + self.beta*sampled_kl_div_qb_pt
+
+        if self.adversarial and self.model.training:
+            r_in = x2.view(x2.shape[0], x.shape[2], x.shape[3], x.shape[4])
+            f_in = pd_x2_z2.view(x2.shape[0], x.shape[2], x.shape[3], x.shape[4])
+            for i in range(self.d_steps):
+                d_loss, g_loss, hidden_loss = self.dnet.get_loss(r_in, f_in)
+                d_loss.backward(retain_graph=True)
+                # print(d_loss, g_loss)
+                self.adversarial_optim.step()
+                self.adversarial_optim.zero_grad()
+            bce_diff = hidden_loss
+        else:
+            g_loss = 0
+            hidden_loss = 0
+
+        loss = bce_diff + hidden_loss + self.d_weight*g_loss +\
+               self.beta*kl_div_qs_pb + self.beta*sampled_kl_div_qb_pt
 
         return loss, bce_diff, kl_div_qs_pb, sampled_kl_div_qb_pt, bce_optimal
 
@@ -469,9 +470,6 @@ class GymTDVAE(BaseGymTDVAE):
         if self.adversarial:
             save_objs = [self.dnet.state_dict(), self.adversarial_optim.state_dict()]
             torch.save(save_objs, save_fname+"disc")
-
-
-
         print("* Saved model to", save_fname)
 
 

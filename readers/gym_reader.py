@@ -11,22 +11,25 @@ from collections import deque
 from pylego.reader import Reader
 from multiprocessing import Process, Pipe, cpu_count
 
-def make_env(env_name, frameskip=3):
+
+def make_env(env_name, frameskip=3, steps=1000000, secs=100000):
     env = gym.make(env_name)
     env.env.frameskip = frameskip
+    env._max_episode_steps = steps
+    env._max_episode_seconds = secs
     return env
 
 
 class GymReader(Reader):
-
     def __init__(self,
                  env,
                  batch_size,
                  seq_len,
                  iters_per_epoch,
-                 done_policy=np.any):
+                 downsample=True,
+                 inner_frameskip=3):
 
-        fn = lambda : make_env(env)
+        fn = lambda : make_env(env, frameskip=inner_frameskip)
         env_fcns = [fn for i in range(batch_size)]
         self.batch_size = batch_size
         self.env_name = env
@@ -40,7 +43,7 @@ class GymReader(Reader):
         self.iters = 0
         self.done = False
         self.buffers = [deque(maxlen=seq_len) for i in range(5)]
-        self.done_policy = done_policy
+        self.downsample = downsample
 
         super().__init__(self.iters_per_epoch)
 
@@ -59,19 +62,20 @@ class GymReader(Reader):
                      epochs=1,
                      fill_buffer=True,
                      max_batches=-1,
-                     inner_frameskip=10):
+                     outer_frameskip=10):
 
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
             actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
 
-        for i in range(inner_frameskip):
+        for i in range(outer_frameskip):
             self.env.step_async(actions)
             obs, rewards, done, meta = self.env.step_wait()
             obs = np.transpose(obs, axes=(0, 3, 1, 2))
             obs = T.tensor(obs).float()/256
-            if "Pong" in self.env_name or "Seaquest" in self.env_name:
+            if "Pong" in self.env_name or "Seaquest" in self.env_name and self.downsample:
                 obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
+                obs = F.avg_pool2d(obs, (2, 2,), stride=2)
 
             for i, val in enumerate([obs, actions, rewards, done, meta]):
                 self.buffers[i].append(val)
