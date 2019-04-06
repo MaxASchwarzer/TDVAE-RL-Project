@@ -376,7 +376,7 @@ class GymTDVAE(BaseGymTDVAE):
 
     def __init__(self, flags, *args, **kwargs):
         self.device = torch.device("cuda" if flags.cuda else "cpu")
-        model = TDVAE((3, 224, 160), flags.h_size, 64, flags.b_size, flags.z_size, flags.layers, flags.samples_per_seq,
+        model = TDVAE((3, 112, 80), flags.h_size, 64, flags.b_size, flags.z_size, flags.layers, flags.samples_per_seq,
                                flags.t_diff_min, flags.t_diff_max, action_space=20)
         if flags.adversarial:
             self.dnet = Discriminator(disc_size=flags.d_size, channels=3)
