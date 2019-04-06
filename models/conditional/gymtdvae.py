@@ -1,3 +1,6 @@
+import glob
+import pathlib
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -65,7 +68,7 @@ class ConvPreProcess(nn.Module):
         self.bn1 = nn.BatchNorm2d(d_hidden)
 
         if blocks is None:
-            scales = np.cumprod([1] + scale)
+            scales = np.cumprod([1] + list(scale))
             blocks = [(l_per_block, int(d_hidden*scale), stride) for l_per_block, scale, stride in
                       zip(l_per_block, scales, stride)]
 
@@ -108,7 +111,7 @@ class ConvDecoder(nn.Module):
         input_size = input_size[1:]
 
         if blocks is None:
-            scales = np.cumprod([1] + scale)
+            scales = np.cumprod([1] + list(scale))
             blocks = [(l_per_block, int(d_hidden*scale), -stride) for l_per_block, scale, stride in
                       zip(l_per_block, scales, stride)]
 
@@ -373,34 +376,27 @@ class TDVAE(nn.Module):
 class GymTDVAE(BaseGymTDVAE):
 
     def __init__(self, flags, *args, **kwargs):
-        self.device = torch.device("cuda" if flags.cuda else "cpu")
-        model = TDVAE((3, 224, 160), flags.h_size, 64, flags.b_size, flags.z_size, flags.layers, flags.samples_per_seq,
-                      flags.t_diff_min, flags.t_diff_max, action_space=20)
-        if flags.adversarial:
-            self.dnet = Discriminator(3, d_size=flags.d_size)
-            self.adversarial_optim = torch.optim.Adam(self.dnet.parameters(), lr=flags.d_lr, betas=(0.0, 0.9))
-            self.optimizer = torch.optim.Adam(model.parameters(), lr=flags.learning_rate, betas=(0.0, 0.9))
-            flags.optimizer = self.optimizer
         self.adversarial = flags.adversarial
         self.beta = flags.beta
         self.d_weight = flags.d_weight
         self.d_steps = flags.d_steps
 
+        model = TDVAE((3, 224, 160), flags.h_size, 64, flags.b_size, flags.z_size, flags.layers, flags.samples_per_seq,
+                      flags.t_diff_min, flags.t_diff_max, action_space=20)
         if self.adversarial:
-            self.dnet.to(self.device)
-            self.model.to(self.device)
-
-            for state in self.adversarial_optim.state.values():
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.cuda()
-
-            for state in self.optimizer.state.values():
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.cuda()
-
+            kwargs['optimizer'] = None  # we create an optimizer later
         super().__init__(model, flags, *args, **kwargs)
+
+        if self.adversarial:
+            self.dnet = Discriminator(3, d_size=flags.d_size)
+            self.dnet.to(self.device)
+
+            self.adversarial_optim = torch.optim.Adam(self.dnet.parameters(), lr=flags.d_lr, betas=(0.0, 0.9))
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=flags.learning_rate, betas=(0.0, 0.9))
+            flags.optimizer = self.optimizer
+
+        if flags.load_file:
+            self.load(flags.load_file)
 
     def loss_function(self, forward_ret, labels=None):
         (x, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu, qb_z2_b2_logvar,
@@ -435,3 +431,39 @@ class GymTDVAE(BaseGymTDVAE):
         loss = bce_diff + self.d_weight * g_loss + self.beta * (kl_div_qs_pb + kl_shift_qb_pt)
 
         return loss, bce_diff, kl_div_qs_pb, kl_shift_qb_pt, bce_optimal
+
+    def initialize(self, load_file):
+        '''Overriding: do not load file during superclass initialization, we do it manually later in init'''
+        pass
+
+    def load(self, load_file):
+        """Load a model from a saved file."""
+        print("* Loading model from", load_file, "...")
+        m_state_dict, o_state_dict, train_steps = torch.load(load_file)
+        self.model.load_state_dict(m_state_dict)
+        self.optimizer.load_state_dict(o_state_dict)
+        self.train_steps = train_steps
+        if self.adversarial:
+            m_state_dict, o_state_dict = torch.load(load_file+"disc")
+            self.dnet.load_state_dict(m_state_dict)
+            self.adversarial_optim.load_state_dict(o_state_dict)
+        print("* Loaded model from", load_file)
+
+    def save(self, save_file, max_files=5):
+        "Save model to file."
+        save_fname = save_file + "." + str(self.train_steps)
+        print("* Saving model to", save_fname, "...")
+        existing = glob.glob(save_file + ".*")
+        pairs = [(f.rsplit('.', 1)[-1], f) for f in existing]
+        pairs = sorted([(int(k), f) for k, f in pairs if k.isnumeric()], reverse=True)
+        for _, fname in pairs[max_files - 1:]:
+            pathlib.Path(fname).unlink()
+
+        save_objs = [self.model.state_dict(), self.optimizer.state_dict(), self.train_steps]
+        torch.save(save_objs, save_fname)
+
+        if self.adversarial:
+            save_objs = [self.dnet.state_dict(), self.adversarial_optim.state_dict()]
+            torch.save(save_objs, save_fname+"disc")
+
+        print("* Saved model to", save_fname)

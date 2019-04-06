@@ -69,7 +69,10 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
     def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
                      max_batches=-1):
         action_conditional_batch = ActionConditionalBatch(self.env, self.seq_len, batch_size, threads, shuffle)
-        for _ in range(epochs * min(max_batches, self.splits[split_name])):
+        epoch_size = self.splits[split_name]
+        if max_batches < 0:
+            epoch_size = min(max_batches, epoch_size)
+        for _ in range(epochs * epoch_size):
             yield action_conditional_batch
 
 
