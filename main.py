@@ -22,8 +22,8 @@ if __name__ == '__main__':
     arg(parser, 'logs_path', type=str, default='logs')
     arg(parser, 'force_logs', type=bool, default=False)
     arg(parser, 'optimizer', type=str, default='adam', help='one of: adam')
-    arg(parser, 'learning_rate', type=float, default=1e-3, help='-1 to use model default')  # FIXME too high?
-    arg(parser, 'd_lr', type=float, default=5e-3, help='LR for discriminator, if in use')
+    arg(parser, 'learning_rate', type=float, default=5e-4, help='-1 to use model default')
+    arg(parser, 'd_lr', type=float, default=1e-3, help='LR for discriminator, if in use')
     arg(parser, 'd_steps', type=int, default=1, help='Disc steps per Gen step.')
     arg(parser, 'd_start', type=int, default=5, help='Epochs before generator starts to train on disc. loss.')
     arg(parser, 'beta', type=float, default=1, help='Parameter controlling KL loss scale')
