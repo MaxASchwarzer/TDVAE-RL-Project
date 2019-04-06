@@ -6,7 +6,7 @@ from torch.nn import functional as F
 
 from pylego import ops
 
-from ..basetdvae import BaseTDVAE
+from ..baseimgtdvae import BaseTDVAE
 
 
 class DBlock(nn.Module):

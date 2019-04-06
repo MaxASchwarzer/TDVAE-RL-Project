@@ -4,14 +4,14 @@ import numpy as np
 
 from pylego import misc
 
-from models.baseimgtdvae import BaseImageTDVAE
+from models.baseimgtdvae import BaseTDVAE
 from .basemnist import MovingMNISTBaseRunner
 
 
 class TDVAERunner(MovingMNISTBaseRunner):
 
     def __init__(self, flags, *args, **kwargs):
-        super().__init__(flags, BaseImageTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'kl_shift_qb_pt'])
+        super().__init__(flags, BaseTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'kl_shift_qb_pt'])
 
     def run_batch(self, batch, train=False):
         batch = self.model.prepare_batch(batch)

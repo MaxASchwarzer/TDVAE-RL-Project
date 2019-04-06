@@ -3,7 +3,7 @@ import os
 
 from pylego.misc import add_argument as arg
 
-from runners.mnist.tdvaerunner import TDVAERunner
+from runners.imgtdvae.tdvaerunner import TDVAERunner
 from runners.conditional.gym_runner import GymRunner
 
 
