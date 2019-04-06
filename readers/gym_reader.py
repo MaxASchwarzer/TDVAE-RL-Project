@@ -10,45 +10,49 @@ import torch.nn.functional as F
 from pylego.reader import Reader
 
 
-def make_env(env_name, frameskip=3):
+def make_env(env_name, frameskip=3, steps=1000000, secs=100000):
     env = gym.make(env_name)
     env.env.frameskip = frameskip
+    env._max_episode_steps = steps
+    env._max_episode_seconds = secs
     return env
 
 
 class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
-    def __init__(self, env, seq_len, batch_size, threads, shuffle):
+    def __init__(self, env, seq_len, batch_size, threads, shuffle, downsample=True, inner_frameskip=3):
         self.env_name = env
         self.seq_len = seq_len
         self.batch_size = batch_size
         self.shuffle = shuffle
 
-        fn = lambda: make_env(env)
+        fn = lambda: make_env(env, frameskip=inner_frameskip)
         env_fcns = [fn for i in range(batch_size)]
         self.env = SubprocVecEnv(env_fcns, n_workers=threads)
         self.env.reset()
         self.sample_env = gym.make(env)
         self.buffers = [deque(maxlen=seq_len) for i in range(5)]
+        self.downsample = downsample
 
-    def get_next(self, actions=None, shuffle=True, fill_buffer=True, inner_frameskip=10):
+    def get_next(self, actions=None, shuffle=True, fill_buffer=True, outer_frameskip=10):
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
             actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
 
-        for _ in range(inner_frameskip):
+        for _ in range(outer_frameskip):
             self.env.step_async(actions)
             obs, rewards, done, meta = self.env.step_wait()
             obs = np.transpose(obs, axes=(0, 3, 1, 2))
             obs = torch.tensor(obs).float() / 256
-            if "Pong" in self.env_name or "Seaquest" in self.env_name:
+            if "Pong" in self.env_name or "Seaquest" in self.env_name and self.downsample:
                 obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
+                obs = F.avg_pool2d(obs, (2, 2,), stride=2)
 
             for i, val in enumerate([obs, actions, rewards, done, meta]):
                 self.buffers[i].append(val)
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
-            return self.get_next(actions=actions, shuffle=shuffle, fill_buffer=True, inner_frameskip=inner_frameskip)
+            return self.get_next(actions=actions, shuffle=shuffle, fill_buffer=True, outer_frameskip=outer_frameskip)
 
         output = [torch.stack(list(self.buffers[0]), 1)] + [np.array(buffer).swapaxes(0, 1)
                                                             for buffer in self.buffers[1:]]

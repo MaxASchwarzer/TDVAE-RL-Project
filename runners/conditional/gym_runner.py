@@ -17,7 +17,7 @@ class GymRunner(BaseRunner):
 
     def run_batch(self, batch, train=False):
         images, actions = self.model.prepare_batch(batch.get_next()[:2])
-        # images = images.contiguous()  # FIXME
+        # images = images.contiguous()  # FIXME necessary?
         loss, bce_diff, kl_div_qs_pb, kl_shift_qb_pt, bce_optimal = self.model.run_loss([images, actions])
         if train:
             self.model.train(loss, clip_grad_norm=self.flags.grad_norm)
@@ -47,7 +47,7 @@ class GymRunner(BaseRunner):
         if split == 'train':
             return
         print('* Visualizing', split)
-        vis_data, aspect = self._visualize_split(split, min(10, self.maxlen - 1), 5)
+        vis_data, aspect = self._visualize_split(split, min(10, self.maxlen - 1), 1)  # FIXME n is 1
         if split == 'test':
             fname = self.flags.log_dir + '/test.png'
         else:
@@ -57,7 +57,7 @@ class GymRunner(BaseRunner):
 
         if split == 'test':
             print('* Generating more visualizations for', split)
-            vis_data, aspect = self._visualize_split(split, min(10, self.maxlen - 1), 5)
+            vis_data, aspect = self._visualize_split(split, min(10, self.maxlen - 1), 1)  # FIXME n is 1
             fname = self.flags.log_dir + '/test_more.png'
             misc.save_comparison_grid(fname, vis_data, rows_cols=aspect, border_shade=1.0, retain_sequence=True)
             print('* More visualizations saved to', fname)
