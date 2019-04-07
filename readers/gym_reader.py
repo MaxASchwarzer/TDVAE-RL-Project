@@ -60,6 +60,10 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         output = [o[:self.batch_size] for o in output]
         return output
 
+    def close(self):
+        self.env.close()
+        self.sample_env.close()
+
 
 class GymReader(Reader):  # TODO move generalized form of this to pylego
 
@@ -78,6 +82,7 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
             epoch_size = min(max_batches, epoch_size)
         for _ in range(epochs * epoch_size):
             yield action_conditional_batch
+        action_conditional_batch.close()
 
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,
