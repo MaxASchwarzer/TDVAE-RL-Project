@@ -1,15 +1,13 @@
-"""Some parts adapted from the TD-VAE code by Xinqiang Ding <xqding@umich.edu>."""
+from collections import deque
+from multiprocessing import Process, Pipe
 
-import numpy as np
-import torch as T
-from torch.utils import data
-from torchvision import datasets
-import torch.nn.functional as F
 import gym
 import gym_vecenv as vecenv
-from collections import deque
+import numpy as np
+import torch
+import torch.nn.functional as F
+
 from pylego.reader import Reader
-from multiprocessing import Process, Pipe, cpu_count
 
 
 def make_env(env_name, frameskip=3, steps=1000000, secs=100000):
@@ -20,59 +18,32 @@ def make_env(env_name, frameskip=3, steps=1000000, secs=100000):
     return env
 
 
-class GymReader(Reader):
-    def __init__(self,
-                 env,
-                 batch_size,
-                 seq_len,
-                 iters_per_epoch,
-                 downsample=True,
-                 inner_frameskip=3):
+class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
-        fn = lambda : make_env(env, frameskip=inner_frameskip)
-        env_fcns = [fn for i in range(batch_size)]
-        self.batch_size = batch_size
+    def __init__(self, env, seq_len, batch_size, threads, shuffle, downsample=True, inner_frameskip=3):
         self.env_name = env
-        self.env = SubprocVecEnv(env_fcns, n_workers=cpu_count())
-        self.env.reset()
         self.seq_len = seq_len
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+
+        fn = lambda: make_env(env, frameskip=inner_frameskip)
+        env_fcns = [fn for i in range(batch_size)]
+        self.env = SubprocVecEnv(env_fcns, n_workers=threads)
+        self.env.reset()
         self.sample_env = gym.make(env)
-        self.iters_per_epoch = {'train': iters_per_epoch,
-                                'val': int(iters_per_epoch*0.15),
-                                'test': int(iters_per_epoch*0.15)}
-        self.iters = 0
-        self.done = False
         self.buffers = [deque(maxlen=seq_len) for i in range(5)]
         self.downsample = downsample
 
-        super().__init__(self.iters_per_epoch)
-
-    def reset(self):
-        self.iters = 0
-        self.done = False
-        self.env.reset()
-
-    def iter_batches(self,
-                     split_name,
-                     batch_size,
-                     actions=None,
-                     shuffle=True,
-                     partial_batching=False,
-                     threads=1,
-                     epochs=1,
-                     fill_buffer=True,
-                     max_batches=-1,
-                     outer_frameskip=10):
-
+    def get_next(self, actions=None, shuffle=True, fill_buffer=True, outer_frameskip=10):
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
             actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
 
-        for i in range(outer_frameskip):
+        for _ in range(outer_frameskip):
             self.env.step_async(actions)
             obs, rewards, done, meta = self.env.step_wait()
             obs = np.transpose(obs, axes=(0, 3, 1, 2))
-            obs = T.tensor(obs).float()/256
+            obs = torch.tensor(obs).float() / 256
             if "Pong" in self.env_name or "Seaquest" in self.env_name and self.downsample:
                 obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
                 obs = F.avg_pool2d(obs, (2, 2,), stride=2)
@@ -81,15 +52,33 @@ class GymReader(Reader):
                 self.buffers[i].append(val)
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
-            return self.iter_batches(split_name, batch_size, actions=actions, shuffle=shuffle)
+            return self.get_next(actions=actions, shuffle=shuffle, fill_buffer=True, outer_frameskip=outer_frameskip)
 
-        output = [T.stack(list(self.buffers[0]), 1)] + [np.array(buffer).swapaxes(0, 1) for buffer in self.buffers[1:]]
+        output = [torch.stack(list(self.buffers[0]), 1)] + [np.array(buffer).swapaxes(0, 1)
+                                                            for buffer in self.buffers[1:]]
 
-        output = [o[:batch_size] for o in output]
-        self.iters += 1
-        if self.iters > self.iters_per_epoch[split_name]:
-            self.done = True
+        output = [o[:self.batch_size] for o in output]
         return output
+
+
+class GymReader(Reader):  # TODO move generalized form of this to pylego
+
+    def __init__(self, env, seq_len, iters_per_epoch):
+        self.env = env
+        self.seq_len = seq_len
+        super().__init__({'train': iters_per_epoch,
+                          'val': int(iters_per_epoch * 0.15),
+                          'test': int(iters_per_epoch * 0.15)})
+
+    def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
+                     max_batches=-1):
+        action_conditional_batch = ActionConditionalBatch(self.env, self.seq_len, batch_size, threads, shuffle)
+        epoch_size = self.splits[split_name]
+        if max_batches > 0:
+            epoch_size = min(max_batches, epoch_size)
+        for _ in range(epochs * epoch_size):
+            yield action_conditional_batch
+
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,
 # and carries the following license:
@@ -115,14 +104,13 @@ class GymReader(Reader):
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-
 def worker(remote, parent_remote, env_fn_wrappers):
     parent_remote.close()
     envs = [env_fn_wrapper.x() for env_fn_wrapper in env_fn_wrappers]
     while True:
         cmd, data = remote.recv()
         if cmd == 'step':
-            obs = []; rewards = []; dones = []; infos = []
+            obs, rewards, dones, infos = [], [], [], []
             for env, action in zip(envs, data):
                 ob, reward, done, info = env.step(action)
                 if np.any(done):
@@ -165,7 +153,7 @@ class SubprocVecEnv(vecenv.vec_env.VecEnv):
         self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(n_workers)])
         self.ps = [Process(target=worker,
                            args=(work_remote, remote, [vecenv.vec_env.CloudpickleWrapper(fn) for fn in env_fns]))
-                    for (work_remote, remote, env_fns) in zip(self.work_remotes, self.remotes, env_fns)]
+                   for (work_remote, remote, env_fns) in zip(self.work_remotes, self.remotes, env_fns)]
         for p in self.ps:
             p.daemon = True # if the main process crashes, we should not cause things to hang
             p.start()

@@ -3,13 +3,14 @@ import os
 
 from pylego.misc import add_argument as arg
 
-from runners.tdvaerunner import TDVAERunner
-from runners.gym_runner import GymRunner
+from runners.imgtdvae.tdvaerunner import TDVAERunner
+from runners.conditional.gym_runner import GymRunner
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     arg(parser, 'name', type=str, required=True, help='name of the experiment')
-    arg(parser, 'model', type=str, default='tdvae.vaemodel', help='model to use')
+    arg(parser, 'model', type=str, default='conditional.gymtdvae', help='model to use')
     arg(parser, 'cuda', type=bool, default=True, help='enable CUDA')
     arg(parser, 'load_file', type=str, default='', help='file to load model from')
     arg(parser, 'save_file', type=str, default='model.dat', help='model save file')
@@ -31,7 +32,7 @@ if __name__ == '__main__':
     arg(parser, 'adversarial', type=bool, default=False, help='Use an auxiliary adversarial loss on reconstructions')
     arg(parser, 'seq_len', type=int, default=20, help='sequence length')
     arg(parser, 'batch_size', type=int, default=64, help='batch size')
-    arg(parser, 'samples_per_seq', type=int, default=16, help='(t1, t2) samples per input sequence')
+    arg(parser, 'samples_per_seq', type=int, default=1, help='(t1, t2) samples per input sequence')
     arg(parser, 'h_size', type=int, default=16, help='Base #channels for resnets before downscaling.')
     arg(parser, 'd_size', type=int, default=16, help='Base #channels for discriminator before downscaling.')
     arg(parser, 'b_size', type=int, default=50, help='belief size')
@@ -40,6 +41,7 @@ if __name__ == '__main__':
     arg(parser, 't_diff_min', type=int, default=1, help='minimum time difference t2-t1')
     arg(parser, 't_diff_max', type=int, default=4, help='maximum time difference t2-t1')
     arg(parser, 'epochs', type=int, default=50000, help='no. of training epochs')
+    arg(parser, 'max_batches', type=int, default=-1, help='max batches per split (if not -1, for debugging)')
     arg(parser, 'print_every', type=int, default=10, help='print losses every these many steps')
     arg(parser, 'gpus', type=str, default='0')
     arg(parser, 'threads', type=int, default=-1, help='data processing threads (-1 to determine from CPUs)')
@@ -81,8 +83,8 @@ if __name__ == '__main__':
 
     flags.save_file = flags.log_dir + '/' + flags.save_file
 
-    # if "gym" in flags.model and "tdvae" in flags.model:
-    runner = GymRunner
-    # elif flags.model.startswith('tdvae.'):
-    #     runner = TDVAERunner
+    if flags.model.startswith('conditional.'):
+        runner = GymRunner
+    elif flags.model.startswith('tdvae.'):
+        runner = TDVAERunner
     runner(flags).run(visualize_only=flags.visualize_only, visualize_split=flags.visualize_split)
