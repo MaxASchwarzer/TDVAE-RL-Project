@@ -42,7 +42,7 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
             self.env.step_async(actions)
             obs, rewards, done, meta = self.env.step_wait()
             obs = np.transpose(obs, axes=(0, 3, 1, 2))
-            obs = torch.tensor(obs).float() / 256
+            obs = torch.tensor(obs).float() / 255
             if "Pong" in self.env_name or "Seaquest" in self.env_name and self.downsample:
                 obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
                 obs = F.avg_pool2d(obs, (2, 2,), stride=2)
@@ -90,7 +90,7 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
         self.action_conditional_batch.close()
 
 
-class ReplayBuffer(Reader):
+class ReplayBuffer(Reader):  # TODO method to add to buffer
 
     def __init__(self, emulator, buffer_size):
         self.buffer = deque(maxlen=buffer_size)
