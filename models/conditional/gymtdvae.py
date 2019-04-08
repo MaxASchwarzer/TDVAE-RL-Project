@@ -173,6 +173,7 @@ class TDVAE(nn.Module):
                  samples_per_seq,
                  t_diff_min,
                  t_diff_max,
+                 t_diff_max_poss=10,
                  action_space=0,
                  action_dim=8):
         super().__init__()
@@ -180,6 +181,7 @@ class TDVAE(nn.Module):
         self.samples_per_seq = samples_per_seq
         self.t_diff_min = t_diff_min
         self.t_diff_max = t_diff_max
+        self.t_diff_max_poss = t_diff_max_poss
 
         self.x_size = x_size
         self.processed_x_size = processed_x_size
@@ -194,19 +196,19 @@ class TDVAE(nn.Module):
                                         every_layer_input=True, use_previous_higher=True)
 
         # Multilayer state model is used. Sampling is done by sampling higher layers first.
-        self.z_b = nn.ModuleList([DBlock(b_size + (z_size if layer < layers - 1 else 0), 50, z_size)
+        self.z_b = nn.ModuleList([DBlock(b_size + (z_size if layer < layers - 1 else 0), 2*b_size, z_size)
                                   for layer in range(layers)])
 
         # Given belief and state at time t2, infer the state at time t1
         self.z1_z2_b = nn.ModuleList([DBlock(b_size + layers * z_size + action_dim +
-                                             (z_size if layer < layers - 1 else 0) + t_diff_max,
-                                             50, z_size)
+                                             (z_size if layer < layers - 1 else 0) + t_diff_max_poss,
+                                             2*b_size, z_size)
                                       for layer in range(layers)])
 
         # Given the state at time t1, model state at time t2 through state transition
         self.z2_z1 = nn.ModuleList([DBlock(layers * z_size + action_dim +
-                                           (z_size if layer < layers - 1 else 0) + t_diff_max,
-                                           50, z_size)
+                                           (z_size if layer < layers - 1 else 0) + t_diff_max_poss,
+                                           2*b_size, z_size)
                                     for layer in range(layers)])
 
         # state to observation
@@ -215,8 +217,8 @@ class TDVAE(nn.Module):
 
         self.action_embedding = nn.Embedding(action_space, action_dim)
 
-        self.time_encoding = torch.zeros(t_diff_max, t_diff_max)
-        for i in range(t_diff_max):
+        self.time_encoding = torch.zeros(t_diff_max_poss, t_diff_max_poss)
+        for i in range(t_diff_max_poss):
             self.time_encoding[i, :i+1] = 1
         self.time_encoding = nn.Parameter(self.time_encoding.float(), requires_grad=False)
 
@@ -237,7 +239,7 @@ class TDVAE(nn.Module):
 
         t1 = torch.randint(0, x.size(1) - self.t_diff_max, (b.size(0), b.size(1)), device=b.device)
         t2 = t1 + torch.randint(self.t_diff_min, self.t_diff_max + 1, (b.size(0), b.size(1)), device=b.device)
-        t_encodings = self.time_encoding[t2 - t1 - 1].reshape(-1, self.t_diff_max).contiguous()
+        t_encodings = self.time_encoding[t2 - t1 - 1].reshape(-1, self.t_diff_max_poss).contiguous()
 
         # Element-wise indexing. sizes: bs, layers, dim
         b1 = torch.gather(b, 2, t1[..., None, None, None].expand(-1, -1, -1, b.size(3), b.size(4))).view(
@@ -333,7 +335,7 @@ class TDVAE(nn.Module):
             processed_x = torch.cat([processed_x, actions], -1)
         # aggregate the belief b
         b = self.b_rnn(processed_x)[:, t]  # size: bs, time, layers, dim
-        t_encodings = self.time_encoding[0].reshape(-1, self.t_diff_max).contiguous()
+        t_encodings = self.time_encoding[0].reshape(-1, self.t_diff_max_poss).contiguous()
         t_encodings = t_encodings.expand(b.shape[0], -1)
 
         # compute z from b
@@ -381,8 +383,9 @@ class GymTDVAE(BaseGymTDVAE):
         self.d_steps = flags.d_steps
 
         if model is None:
-            model = TDVAE((3, 112, 80), flags.h_size, 64, flags.b_size, flags.z_size, flags.layers,
-                          flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, action_space=20)
+            model = TDVAE((3, 112, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
+                          flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, flags.t_diff_max_poss,
+                          action_space=20)
         if self.adversarial:
             kwargs['optimizer'] = None  # we create an optimizer later
         super().__init__(model, flags, *args, **kwargs)
