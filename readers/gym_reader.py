@@ -33,7 +33,7 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         self.buffers = [deque(maxlen=seq_len) for i in range(5)]
         self.downsample = downsample
 
-    def get_next(self, actions=None, fill_buffer=True, outer_frameskip=10):
+    def get_next(self, actions=None, fill_buffer=True, outer_frameskip=2):
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
             actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
@@ -69,16 +69,57 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
     def __init__(self, env, seq_len, batch_size, threads, iters_per_epoch):
         self.env = env
         self.seq_len = seq_len
+        self.batch_size = batch_size
+        self.threads = threads
         super().__init__({'train': iters_per_epoch})
         self.action_conditional_batch = ActionConditionalBatch(env, seq_len, batch_size, threads)
 
     def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
                      max_batches=-1):
+        assert split_name == 'train'
+        assert batch_size == self.batch_size
+        assert threads == self.threads
+
         epoch_size = self.splits[split_name]
         if max_batches > 0:
             epoch_size = min(max_batches, epoch_size)
         for _ in range(epochs * epoch_size):
             yield self.action_conditional_batch
+
+    def close(self):
+        self.action_conditional_batch.close()
+
+
+class ReplayBuffer(Reader):
+
+    def __init__(self, emulator, buffer_size):
+        self.buffer = deque(maxlen=buffer_size)
+        print('* Initializing replay buffer')  # TODO dump initial replay buffer state
+        while len(self.buffer) < buffer_size:
+            print(' - %d/%d' % (len(self.buffer), buffer_size))
+            for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
+                                                           max_batches=int(np.ceil(buffer_size / emulator.batch_size))):
+                obs, actions, rewards = conditional_batch.get_next()[:3]
+                self.buffer.extend(zip(obs, actions, rewards))
+                if len(self.buffer) >= buffer_size:
+                    break
+        print('* Replay buffer initialized')
+        super().__init__({'train': buffer_size})
+
+    def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
+                     max_batches=-1):
+        assert split_name == 'train'
+        assert shuffle
+
+        split_size = len(self.buffer)
+        epoch_size = split_size
+        if max_batches > 0:
+            epoch_size = min(max_batches, epoch_size)
+        for _ in range(epochs * epoch_size):
+            # specify p here to change uniform sampling:
+            indices = np.random.choice(split_size, size=batch_size, replace=False)
+            batch = list(zip(*(self.buffer[i] for i in indices)))
+            yield torch.stack(batch[0]), np.array(batch[1]), np.array(batch[2])
 
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,

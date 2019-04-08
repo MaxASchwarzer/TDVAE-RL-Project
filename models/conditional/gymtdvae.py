@@ -142,15 +142,13 @@ class ConvDecoder(nn.Module):
         return torch.sigmoid(x4.flatten(1, -1))
 
 
-class Decoder(nn.Module):
-    """ The decoder layer converting state to observation.
-    """
+class QNetwork(nn.Module):
 
-    def __init__(self, z_size, hidden_size, x_size):
+    def __init__(self, z_size, hidden_size, action_space):
         super().__init__()
         self.fc1 = nn.Linear(z_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, x_size)
+        self.fc3 = nn.Linear(hidden_size, action_space)
 
     def forward(self, z):
         t = torch.tanh(self.fc1(z))
@@ -212,6 +210,9 @@ class TDVAE(nn.Module):
         # state to observation
         # self.x_z = ConvDecoder(layers * z_size, resnet_hidden_size, x_size)
         self.x_z = SAGANGenerator(x_size, z_dim=layers * z_size, d_hidden=resnet_hidden_size)
+
+        # state to Q value per action
+        self.q_z = QNetwork(layers * z_size, resnet_hidden_size, action_space)
 
         self.action_embedding = nn.Embedding(action_space, action_dim)
 
