@@ -83,7 +83,11 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
         epoch_size = self.splits[split_name]
         if max_batches > 0:
             epoch_size = min(max_batches, epoch_size)
-        for _ in range(epochs * epoch_size):
+        if epoch_size is np.inf:
+            generator = iter(int, 1)
+        else:
+            generator = range(epochs * epoch_size)
+        for _ in generator:
             yield self.action_conditional_batch
 
     def close(self):
@@ -92,7 +96,7 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
 
 class ReplayBuffer(Reader):  # TODO method to add to buffer
 
-    def __init__(self, emulator, buffer_size):
+    def __init__(self, emulator, buffer_size, iters_per_epoch):
         self.buffer = deque(maxlen=buffer_size)
         print('* Initializing replay buffer')  # TODO dump initial replay buffer state
         while len(self.buffer) < buffer_size:
@@ -104,20 +108,19 @@ class ReplayBuffer(Reader):  # TODO method to add to buffer
                 if len(self.buffer) >= buffer_size:
                     break
         print('* Replay buffer initialized')
-        super().__init__({'train': buffer_size})
+        super().__init__({'train': iters_per_epoch})
 
     def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
                      max_batches=-1):
         assert split_name == 'train'
         assert shuffle
 
-        split_size = len(self.buffer)
-        epoch_size = split_size
+        epoch_size = self.splits[split_name]
         if max_batches > 0:
             epoch_size = min(max_batches, epoch_size)
         for _ in range(epochs * epoch_size):
             # specify p here to change uniform sampling:
-            indices = np.random.choice(split_size, size=batch_size, replace=False)
+            indices = np.random.choice(len(self.buffer), size=batch_size, replace=False)
             batch = list(zip(*(self.buffer[i] for i in indices)))
             yield torch.stack(batch[0]), np.array(batch[1]), np.array(batch[2])
 
