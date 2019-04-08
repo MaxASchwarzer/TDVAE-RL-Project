@@ -85,6 +85,11 @@ if __name__ == '__main__':
 
     if flags.model.startswith('conditional.'):
         runner = GymRunner
+        val_split = None
+        test_split = None
     elif flags.model.startswith('tdvae.'):
         runner = TDVAERunner
-    runner(flags).run(visualize_only=flags.visualize_only, visualize_split=flags.visualize_split)
+        val_split = 'val'
+        test_split = 'test'
+    runner(flags).run(val_split=val_split, test_split=test_split, visualize_only=flags.visualize_only,
+                      visualize_split=flags.visualize_split)

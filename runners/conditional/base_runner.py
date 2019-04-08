@@ -1,6 +1,5 @@
 import importlib
 
-from readers.moving_mnist import MovingMNISTReader
 from readers.gym_reader import GymReader
 from pylego import misc, runner
 
@@ -9,7 +8,7 @@ class BaseRunner(runner.Runner):
 
     def __init__(self, flags, model_class, log_keys, *args, **kwargs):
         self.flags = flags
-        reader = GymReader(flags.env, flags.seq_len, flags.iters_per_epoch)
+        reader = GymReader(flags.env, flags.seq_len, flags.batch_size, flags.threads, flags.iters_per_epoch)
 
         summary_dir = flags.log_dir + '/summary'
         super().__init__(reader, flags.batch_size, flags.epochs, summary_dir, log_keys=log_keys,

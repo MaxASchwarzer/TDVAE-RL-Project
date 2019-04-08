@@ -20,11 +20,10 @@ def make_env(env_name, frameskip=3, steps=1000000, secs=100000):
 
 class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
-    def __init__(self, env, seq_len, batch_size, threads, shuffle, downsample=True, inner_frameskip=3):
+    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=3):
         self.env_name = env
         self.seq_len = seq_len
         self.batch_size = batch_size
-        self.shuffle = shuffle
 
         fn = lambda: make_env(env, frameskip=inner_frameskip)
         env_fcns = [fn for i in range(batch_size)]
@@ -34,7 +33,7 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         self.buffers = [deque(maxlen=seq_len) for i in range(5)]
         self.downsample = downsample
 
-    def get_next(self, actions=None, shuffle=True, fill_buffer=True, outer_frameskip=10):
+    def get_next(self, actions=None, fill_buffer=True, outer_frameskip=10):
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
             actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
@@ -52,7 +51,7 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
                 self.buffers[i].append(val)
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
-            return self.get_next(actions=actions, shuffle=shuffle, fill_buffer=True, outer_frameskip=outer_frameskip)
+            return self.get_next(actions=actions, fill_buffer=True, outer_frameskip=outer_frameskip)
 
         output = [torch.stack(list(self.buffers[0]), 1)] + [np.array(buffer).swapaxes(0, 1)
                                                             for buffer in self.buffers[1:]]
@@ -67,22 +66,19 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
 class GymReader(Reader):  # TODO move generalized form of this to pylego
 
-    def __init__(self, env, seq_len, iters_per_epoch):
+    def __init__(self, env, seq_len, batch_size, threads, iters_per_epoch):
         self.env = env
         self.seq_len = seq_len
-        super().__init__({'train': iters_per_epoch,
-                          'val': int(iters_per_epoch * 0.15),
-                          'test': int(iters_per_epoch * 0.15)})
+        super().__init__({'train': iters_per_epoch})
+        self.action_conditional_batch = ActionConditionalBatch(env, seq_len, batch_size, threads)
 
     def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
                      max_batches=-1):
-        action_conditional_batch = ActionConditionalBatch(self.env, self.seq_len, batch_size, threads, shuffle)
         epoch_size = self.splits[split_name]
         if max_batches > 0:
             epoch_size = min(max_batches, epoch_size)
         for _ in range(epochs * epoch_size):
-            yield action_conditional_batch
-        action_conditional_batch.close()
+            yield self.action_conditional_batch
 
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,
