@@ -5,7 +5,7 @@ from readers.gym_reader import GymReader, ReplayBuffer
 
 if __name__ == '__main__':
     emulator = GymReader('Seaquest-v0', 6, 4, 2, 100)
-    reader = ReplayBuffer(emulator, 50)
+    reader = ReplayBuffer(emulator, 500)
 
     for i, batch in enumerate(reader.iter_batches('train', 4, max_batches=5)):
         print(len(batch))
@@ -16,4 +16,6 @@ if __name__ == '__main__':
         print()
         if i < 3:
             batch = batch[0].numpy().reshape(4 * 6, 3, 112, 80)
-            save_comparison_grid('seq%d.png' % i, batch)
+            save_comparison_grid('seq%d.png' % i, batch, rows_cols=(4, 6), retain_sequence=True)
+            print(actions)
+            print()
