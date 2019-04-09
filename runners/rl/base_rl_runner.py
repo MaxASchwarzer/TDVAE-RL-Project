@@ -17,6 +17,7 @@ class BaseRLRunner(runner.Runner):
         self.emulator_iter = emulator.iter_batches('train', flags.batch_size, threads=flags.threads)
         self.emulator_state = next(self.emulator_iter).get_next()[:3]
         self.action_space = emulator.action_space()
+        self.eps_decay = misc.LinearDecay(flags.eps_decay_start, flags.eps_decay_end, 1.0, flags.eps_final)
 
         reader = ReplayBuffer(emulator, flags.replay_size, flags.iters_per_epoch)
 
@@ -55,7 +56,7 @@ class BaseRLRunner(runner.Runner):
             random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
             self.model.set_train(True)
 
-            eps = 0.1  # FIXME remove hardcoding and setup decaying epsilon
+            eps = self.eps_decay.get_y(self.model.get_train_steps())
             do_random = np.random.choice(2, size=selected_actions.shape, p=[1. - eps, eps])
             actions = np.where(do_random, random_actions, selected_actions)
 
