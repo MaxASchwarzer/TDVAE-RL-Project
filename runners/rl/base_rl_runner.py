@@ -16,6 +16,7 @@ class BaseRLRunner(runner.Runner):
         emulator = GymReader(flags.env, flags.seq_len, flags.batch_size, flags.threads, np.inf)
         self.emulator_iter = emulator.iter_batches('train', flags.batch_size, threads=flags.threads)
         self.emulator_state = next(self.emulator_iter).get_next()[:3]
+        self.action_space = emulator.action_space()
 
         reader = ReplayBuffer(emulator, flags.replay_size, flags.iters_per_epoch)
 
@@ -24,9 +25,9 @@ class BaseRLRunner(runner.Runner):
                          threads=flags.threads, print_every=flags.print_every, visualize_every=flags.visualize_every,
                          max_batches=flags.max_batches, *args, **kwargs)
         model_class = misc.get_subclass(importlib.import_module('models.' + self.flags.model), model_class)
-        self.model = model_class(self.flags, rl=True, optimizer=flags.optimizer, learning_rate=flags.learning_rate,
-                                 cuda=flags.cuda, load_file=flags.load_file, save_every=flags.save_every,
-                                 save_file=flags.save_file, debug=flags.debug)
+        self.model = model_class(self.flags, action_space=self.action_space, rl=True, optimizer=flags.optimizer,
+                                 learning_rate=flags.learning_rate, cuda=flags.cuda, load_file=flags.load_file,
+                                 save_every=flags.save_every, save_file=flags.save_file, debug=flags.debug)
 
         # consider history length for simulation to be the expected t seen during TDQVAE training
         self.simulation_start = flags.seq_len - int(np.ceil(0.5 * (flags.seq_len + flags.t_diff_min))) + 1
@@ -41,7 +42,6 @@ class BaseRLRunner(runner.Runner):
         reader_iter = self.reader.iter_batches(split, self.batch_size, shuffle=train, partial_batching=not train,
                                                threads=self.threads, max_batches=self.max_batches)
         for i in range(self.reader.get_size(split)):
-            # Sequence length for deciding actions: int(np.ceil((seq_len - t_diff_max) / 2))
             obs, actions, rewards = self.emulator_state
             obs = obs[:, self.simulation_start:]
             actions = actions[:, self.simulation_start:]
@@ -51,8 +51,13 @@ class BaseRLRunner(runner.Runner):
             self.model.set_train(False)
             with torch.no_grad():
                 q = self.model.model.compute_q(obs, actions)
-            actions = torch.argmax(q, dim=1).cpu().numpy()
+            selected_actions = torch.argmax(q, dim=1).cpu().numpy()
+            random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
             self.model.set_train(True)
+
+            eps = 0.1  # FIXME remove hardcoding and setup decaying epsilon
+            do_random = np.random.choice(2, size=selected_actions.shape, p=[1. - eps, eps])
+            actions = np.where(do_random, random_actions, selected_actions)
 
             self.emulator_state = next(self.emulator_iter).get_next(actions)[:3]
             self.reader.add(self.emulator_state)  # add trajectory to replay buffer

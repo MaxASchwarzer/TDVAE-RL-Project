@@ -400,7 +400,7 @@ class TDQVAE(nn.Module):
 
 class GymTDQVAE(BaseGymTDVAE):
 
-    def __init__(self, flags, model=None, rl=False, *args, **kwargs):
+    def __init__(self, flags, model=None, action_space=20, rl=False, *args, **kwargs):
         self.rl = rl
         self.adversarial = flags.adversarial
         self.beta = flags.beta
@@ -410,7 +410,7 @@ class GymTDQVAE(BaseGymTDVAE):
         if model is None:
             model_args = [(3, 112, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
                           flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, flags.t_diff_max_poss]
-            model_kwargs = {'action_space': 20}
+            model_kwargs = {'action_space': action_space}
             if rl:
                 model_kwargs['rl'] = True
             model = TDQVAE(*model_args, **model_kwargs)

@@ -29,14 +29,17 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         env_fcns = [fn for i in range(batch_size)]
         self.env = SubprocVecEnv(env_fcns, n_workers=threads)
         self.env.reset()
-        self.sample_env = gym.make(env)
         self.buffers = [deque(maxlen=seq_len) for i in range(5)]
         self.downsample = downsample
+
+        sample_env = gym.make(env)
+        self.action_space = sample_env.action_space.n
+        sample_env.close()
 
     def get_next(self, actions=None, fill_buffer=True, outer_frameskip=2):
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
-            in_actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
+            in_actions = np.random.randint(0, self.action_space, size=self.batch_size)
         else:
             in_actions = actions
 
@@ -63,7 +66,6 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
     def close(self):
         self.env.close()
-        self.sample_env.close()
 
 
 class GymReader(Reader):  # TODO move generalized form of this to pylego
@@ -75,6 +77,9 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
         self.threads = threads
         super().__init__({'train': iters_per_epoch})
         self.action_conditional_batch = ActionConditionalBatch(env, seq_len, batch_size, threads)
+
+    def action_space(self):
+        return self.action_conditional_batch.action_space
 
     def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
                      max_batches=-1):
