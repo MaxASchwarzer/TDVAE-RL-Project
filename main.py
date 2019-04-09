@@ -5,6 +5,7 @@ from pylego.misc import add_argument as arg
 
 from runners.imgtdvae.tdvaerunner import TDVAERunner
 from runners.conditional.gym_runner import GymRunner
+from runners.rl.rl_runner import GymRLRunner
 
 
 if __name__ == '__main__':
@@ -17,7 +18,7 @@ if __name__ == '__main__':
     arg(parser, 'save_every', type=int, default=500, help='save every these many global steps (-1 to disable saving)')
     arg(parser, 'data_path', type=str, default='data/MNIST')
     arg(parser, 'data', type=str, default='gym', help="Data source to use.  Set to gym and set env flag for gym.")
-    arg(parser, 'env', type=str, default='Pong-v0', help="Gym environment to use (if data=gym)")
+    arg(parser, 'env', type=str, default='Seaquest-v0', help="Gym environment to use (if data=gym)")
     arg(parser, 'iters_per_epoch', type=int, default=100, help="Number of batches per epoch if in Gym.")
     arg(parser, 'logs_path', type=str, default='logs')
     arg(parser, 'force_logs', type=bool, default=False)
@@ -30,9 +31,13 @@ if __name__ == '__main__':
     arg(parser, 'd_weight', type=float, default=10, help='Parameter for discriminator loss scale')
     arg(parser, 'grad_norm', type=float, default=5.0, help='gradient norm clipping (-1 to disable)')
     arg(parser, 'adversarial', type=bool, default=False, help='Use an auxiliary adversarial loss on reconstructions')
+    arg(parser, 'rl', type=bool, default=False, help='Do RL')
     arg(parser, 'seq_len', type=int, default=20, help='sequence length')
     arg(parser, 'batch_size', type=int, default=64, help='batch size')
+    arg(parser, 'replay_size', type=int, default=10000, help='Experience replay buffer size')
+    arg(parser, 'freeze_every', type=int, default=10000, help='Freeze a Q network every this many steps')
     arg(parser, 'samples_per_seq', type=int, default=1, help='(t1, t2) samples per input sequence')
+    arg(parser, 'discount_factor', type=float, default=0.99, help='RL discount factor (aka gamma)')
     arg(parser, 'h_size', type=int, default=32, help='Base #channels for resnets before downscaling.')
     arg(parser, 'd_size', type=int, default=16, help='Base #channels for discriminator before downscaling.')
     arg(parser, 'b_size', type=int, default=128, help='belief size')
@@ -87,7 +92,10 @@ if __name__ == '__main__':
     flags.save_file = flags.log_dir + '/' + flags.save_file
 
     if flags.model.startswith('conditional.'):
-        runner = GymRunner
+        if flags.rl:
+            runner = GymRLRunner
+        else:
+            runner = GymRunner
         val_split = None
         test_split = None
     elif flags.model.startswith('tdvae.'):

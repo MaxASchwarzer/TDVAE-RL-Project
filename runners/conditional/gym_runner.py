@@ -1,4 +1,3 @@
-import collections
 import numpy as np
 
 from pylego import misc
@@ -12,22 +11,14 @@ class GymRunner(BaseRunner):
     def __init__(self, flags, *args, **kwargs):
         super().__init__(flags, BaseGymTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'kl_shift_qb_pt'])
         self.maxlen = flags.seq_len
-        self.adv_start = flags.d_start
-        self.d_weight = flags.d_weight
 
     def run_batch(self, batch, train=False):
         data = batch.get_next()
         images, actions = self.model.prepare_batch(data[0:2])
-        # images = images.contiguous()  # FIXME necessary?
-        loss, bce_diff, kl_div_qs_pb, kl_shift_qb_pt, bce_optimal = self.model.run_loss([images, actions])
+        report = self.model.run_loss([images, actions])
         if train:
-            self.model.train(loss, clip_grad_norm=self.flags.grad_norm)
-
-        return collections.OrderedDict([('loss', loss.item()),
-                                        ('bce_diff', bce_diff.item()),
-                                        ('kl_div_qs_pb', kl_div_qs_pb.item()),
-                                        ('kl_shift_qb_pt', kl_shift_qb_pt.item()),
-                                        ('bce_optimal', bce_optimal.item())])
+            self.model.train(report['loss'], clip_grad_norm=self.flags.grad_norm)
+        return report
 
     def _visualize_split(self, split, t, n):
         bs = min(self.batch_size, 15)

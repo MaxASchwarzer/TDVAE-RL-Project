@@ -1,3 +1,4 @@
+import collections
 import glob
 import pathlib
 
@@ -50,13 +51,7 @@ class ConvPreProcess(nn.Module):
     """ The pre-process layer for image.
     """
 
-    def __init__(self,
-                 input_size,
-                 d_hidden,
-                 d_out,
-                 blocks=None,
-                 scale=(2, 2, 2),
-                 stride=(2, 2, 2, 2),
+    def __init__(self, input_size, d_hidden, d_out, blocks=None, scale=(2, 2, 2), stride=(2, 2, 2, 2),
                  l_per_block=(2, 2, 2, 2)):
         super().__init__()
 
@@ -96,13 +91,7 @@ class ConvDecoder(nn.Module):
     """ The pre-process layer for image.
     """
 
-    def __init__(self,
-                 d_out,
-                 d_hidden,
-                 input_size,
-                 blocks=None,
-                 scale=(2, 2, 2, 2),
-                 stride=(2, 2, 2, 2, 2),
+    def __init__(self, d_out, d_hidden, input_size, blocks=None, scale=(2, 2, 2, 2), stride=(2, 2, 2, 2, 2),
                  l_per_block=(4, 4, 4, 4, 4)):
         super().__init__()
 
@@ -142,15 +131,13 @@ class ConvDecoder(nn.Module):
         return torch.sigmoid(x4.flatten(1, -1))
 
 
-class Decoder(nn.Module):
-    """ The decoder layer converting state to observation.
-    """
+class QNetwork(nn.Module):
 
-    def __init__(self, z_size, hidden_size, x_size):
+    def __init__(self, z_size, hidden_size, action_space):
         super().__init__()
         self.fc1 = nn.Linear(z_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, x_size)
+        self.fc3 = nn.Linear(hidden_size, action_space)
 
     def forward(self, z):
         t = torch.tanh(self.fc1(z))
@@ -159,23 +146,12 @@ class Decoder(nn.Module):
         return p
 
 
-class TDVAE(nn.Module):
+class TDQVAE(nn.Module):
     """ The full TD-VAE model with jumpy prediction.
     """
 
-    def __init__(self,
-                 x_size,
-                 resnet_hidden_size,
-                 processed_x_size,
-                 b_size,
-                 z_size,
-                 layers,
-                 samples_per_seq,
-                 t_diff_min,
-                 t_diff_max,
-                 t_diff_max_poss=10,
-                 action_space=0,
-                 action_dim=8):
+    def __init__(self, x_size, resnet_hidden_size, processed_x_size, b_size, z_size, layers, samples_per_seq,
+                 t_diff_min, t_diff_max, t_diff_max_poss=10, action_space=0, action_dim=8, rl=False):
         super().__init__()
         self.layers = layers
         self.samples_per_seq = samples_per_seq
@@ -187,6 +163,8 @@ class TDVAE(nn.Module):
         self.processed_x_size = processed_x_size
         self.b_size = b_size
         self.z_size = z_size
+
+        self.rl = rl
 
         # Input pre-process layer
         self.process_x = ConvPreProcess(x_size, resnet_hidden_size, processed_x_size)
@@ -215,6 +193,10 @@ class TDVAE(nn.Module):
         # self.x_z = ConvDecoder(layers * z_size, resnet_hidden_size, x_size)
         self.x_z = SAGANGenerator(x_size, z_dim=layers * z_size, d_hidden=resnet_hidden_size)
 
+        # state to Q value per action
+        if rl:
+            self.q_z = QNetwork(layers * z_size, resnet_hidden_size, action_space)
+
         self.action_embedding = nn.Embedding(action_space, action_dim)
 
         self.time_encoding = torch.zeros(t_diff_max_poss, t_diff_max_poss)
@@ -222,7 +204,7 @@ class TDVAE(nn.Module):
             self.time_encoding[i, :i+1] = 1
         self.time_encoding = nn.Parameter(self.time_encoding.float(), requires_grad=False)
 
-    def forward(self, x, actions):
+    def compute_q(self, x, actions):
         # pre-process image x
         im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
@@ -231,14 +213,38 @@ class TDVAE(nn.Module):
             actions = self.action_embedding(actions)
             processed_x = torch.cat([processed_x, actions], -1)
 
-        # aggregate the belief b
+        # aggregate the belief b  TODO rewards should be considered in b
+        b = self.b_rnn(processed_x)  # size: bs, time, layers, dim
+        b = b[:, -1]  # size: bs, layers, dim
+
+        zs = []
+        for layer in range(self.layers - 1, -1, -1):
+            if layer == self.layers - 1:
+                z_mu, z_logvar = self.z_b[layer](b[:, layer])
+            else:
+                z_mu, z_logvar = self.z_b[layer](torch.cat([b[:, layer], z], dim=1))
+
+            z = ops.reparameterize_gaussian(z_mu, z_logvar, self.training)
+            zs.insert(0, z)
+
+        z = torch.cat(zs, dim=1)
+        return self.q_z(z)
+
+    def inference_and_q(self, x, actions, t1, t2):
+        # pre-process image x
+        im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
+        processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
+        processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
+        if actions is not None:
+            actions = self.action_embedding(actions)
+            processed_x = torch.cat([processed_x, actions], -1)
+
+        # aggregate the belief b  TODO rewards should be considered in b
         b = self.b_rnn(processed_x)  # size: bs, time, layers, dim
 
         # replicate b multiple times
         b = b[None, ...].expand(self.samples_per_seq, -1, -1, -1, -1)  # size: copy, bs, time, layers, dim
 
-        t1 = torch.randint(0, x.size(1) - self.t_diff_max, (b.size(0), b.size(1)), device=b.device)
-        t2 = t1 + torch.randint(self.t_diff_min, self.t_diff_max + 1, (b.size(0), b.size(1)), device=b.device)
         t_encodings = self.time_encoding[t2 - t1 - 1].reshape(-1, self.t_diff_max_poss).contiguous()
 
         # Element-wise indexing. sizes: bs, layers, dim
@@ -248,9 +254,8 @@ class TDVAE(nn.Module):
             -1, b.size(3), b.size(4))
         if actions is not None:
             actions = actions[None, ...].expand(self.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
-            a = torch.gather(actions, 2, t1[..., None, None].expand(-1, -1, -1,
-                                                                    actions.shape[-1])).view(-1, actions.shape[-1])
-            # b1 = torch.cat([b1, a[:, None, :].expand(-1, self.layers, -1)], -1)
+            a1 = torch.gather(actions, 2, t1[..., None, None].expand(-1, -1, -1,
+                                                                     actions.shape[-1])).view(-1, actions.shape[-1])
 
         # q_B(z2 | b2)
         qb_z2_b2_mus, qb_z2_b2_logvars, qb_z2_b2s = [], [], []
@@ -269,15 +274,15 @@ class TDVAE(nn.Module):
         qb_z2_b2_logvar = torch.cat(qb_z2_b2_logvars, dim=1)
         qb_z2_b2 = torch.cat(qb_z2_b2s, dim=1)
 
-        # q_S(z1 | z2, b1, b2) ~= q_S(z1 | z2, b1)
+        # q_S(z1 | z2, b1, b2) ~= q_S(z1 | z2, b1)  XXX why a1 here?
         qs_z1_z2_b1_mus, qs_z1_z2_b1_logvars, qs_z1_z2_b1s = [], [], []
         for layer in range(self.layers - 1, -1, -1):
             if layer == self.layers - 1:
                 qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar = self.z1_z2_b[layer](torch.cat([qb_z2_b2, b1[:, layer],
-                                                                                    t_encodings, a], dim=1))
+                                                                                    t_encodings, a1], dim=1))
             else:
                 qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar = self.z1_z2_b[layer](torch.cat([qb_z2_b2, b1[:, layer],
-                                                                                    qs_z1_z2_b1, t_encodings, a],
+                                                                                    qs_z1_z2_b1, t_encodings, a1],
                                                                                    dim=1))
             qs_z1_z2_b1_mus.insert(0, qs_z1_z2_b1_mu)
             qs_z1_z2_b1_logvars.insert(0, qs_z1_z2_b1_logvar)
@@ -289,15 +294,35 @@ class TDVAE(nn.Module):
         qs_z1_z2_b1_logvar = torch.cat(qs_z1_z2_b1_logvars, dim=1)
         qs_z1_z2_b1 = torch.cat(qs_z1_z2_b1s, dim=1)
 
+        if self.rl:
+            # Q values
+            q1 = self.q_z(qs_z1_z2_b1)
+            q2 = self.q_z(qb_z2_b2)
+        else:
+            q1, q2 = 0, 0
+        return (q1, q2, t_encodings, b1, a1, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, qs_z1_z2_b1s, qs_z1_z2_b1, qb_z2_b2_mu,
+                qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2)
+
+    def forward(self, x, actions):
+        if self.rl:
+            rl_pad = 1
+        else:
+            rl_pad = 0
+        t1 = torch.randint(0, x.size(1) - rl_pad - self.t_diff_max, (self.samples_per_seq, x.size(0)), device=x.device)
+        t2 = t1 + torch.randint(self.t_diff_min, self.t_diff_max + 1, (self.samples_per_seq, x.size(0)),
+                                device=x.device)
+
+        (q1, q2, t_encodings, b1, a1, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, qs_z1_z2_b1s, qs_z1_z2_b1, qb_z2_b2_mu,
+         qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2) = self.inference_and_q(x, actions, t1, t2)
+
         # p_T(z2 | z1), also conditions on q_B(z2) from higher layer
         pt_z2_z1_mus, pt_z2_z1_logvars = [], []
         for layer in range(self.layers - 1, -1, -1):
             if layer == self.layers - 1:
-                pt_z2_z1_mu, pt_z2_z1_logvar = self.z2_z1[layer](torch.cat([qs_z1_z2_b1, t_encodings, a], dim=1))
+                pt_z2_z1_mu, pt_z2_z1_logvar = self.z2_z1[layer](torch.cat([qs_z1_z2_b1, t_encodings, a1], dim=1))
             else:
-                pt_z2_z1_mu, pt_z2_z1_logvar = self.z2_z1[layer](torch.cat([qs_z1_z2_b1,
-                                                                            qb_z2_b2s[layer + 1],
-                                                                            t_encodings, a], dim=1))
+                pt_z2_z1_mu, pt_z2_z1_logvar = self.z2_z1[layer](torch.cat([qs_z1_z2_b1, qb_z2_b2s[layer + 1],
+                                                                            t_encodings, a1], dim=1))
             pt_z2_z1_mus.insert(0, pt_z2_z1_mu)
             pt_z2_z1_logvars.insert(0, pt_z2_z1_logvar)
 
@@ -310,8 +335,7 @@ class TDVAE(nn.Module):
             if layer == self.layers - 1:
                 pb_z1_b1_mu, pb_z1_b1_logvar = self.z_b[layer](b1[:, layer])
             else:
-                pb_z1_b1_mu, pb_z1_b1_logvar = self.z_b[layer](torch.cat([b1[:, layer],
-                                                                          qs_z1_z2_b1s[layer + 1]],
+                pb_z1_b1_mu, pb_z1_b1_logvar = self.z_b[layer](torch.cat([b1[:, layer], qs_z1_z2_b1s[layer + 1]],
                                                                          dim=1))
             pb_z1_b1_mus.insert(0, pb_z1_b1_mu)
             pb_z1_b1_logvars.insert(0, pb_z1_b1_logvar)
@@ -322,8 +346,8 @@ class TDVAE(nn.Module):
         # p_D(x2 | z2)
         pd_x2_z2 = self.x_z(qb_z2_b2)
 
-        return (x, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu, qb_z2_b2_logvar,
-                qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2)
+        return (x, actions, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu,
+                qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2)
 
     def visualize(self, x, t, n, actions):
         # pre-process image x
@@ -374,18 +398,22 @@ class TDVAE(nn.Module):
         return torch.stack(rollout_x, dim=1)
 
 
-class GymTDVAE(BaseGymTDVAE):
+class GymTDQVAE(BaseGymTDVAE):
 
-    def __init__(self, flags, model=None, *args, **kwargs):
+    def __init__(self, flags, model=None, rl=False, *args, **kwargs):
+        self.rl = rl
         self.adversarial = flags.adversarial
         self.beta = flags.beta
         self.d_weight = flags.d_weight
         self.d_steps = flags.d_steps
 
         if model is None:
-            model = TDVAE((3, 112, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
-                          flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, flags.t_diff_max_poss,
-                          action_space=20)
+            model_args = [(3, 112, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
+                          flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, flags.t_diff_max_poss]
+            model_kwargs = {'action_space': 20}
+            if rl:
+                model_kwargs['rl'] = True
+            model = TDQVAE(*model_args, **model_kwargs)
         if self.adversarial:
             kwargs['optimizer'] = None  # we create an optimizer later
         super().__init__(model, flags, *args, **kwargs)
@@ -398,12 +426,20 @@ class GymTDVAE(BaseGymTDVAE):
             self.optimizer = torch.optim.Adam(self.model.parameters(), lr=flags.learning_rate, betas=(0.0, 0.9))
             flags.optimizer = self.optimizer
 
+        if rl:
+            self.target_net = TDQVAE(*model_args, **model_kwargs)
+            self.target_net.eval()
+            self.target_net.to(self.device)
+
         if flags.load_file:
             self.load(flags.load_file)
 
+    def update_target_net(self):
+        self.target_net.load_state_dict(self.model.state_dict())
+
     def loss_function(self, forward_ret, labels=None):
-        (x, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu, qb_z2_b2_logvar,
-         qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2) = forward_ret
+        (x, actions, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu,
+         qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2) = forward_ret
 
         # replicate x multiple times
         x_flat = x.flatten(2, -1)
@@ -433,9 +469,41 @@ class GymTDVAE(BaseGymTDVAE):
             g_loss = 0
             hidden_loss = 0
 
-        loss = bce_diff + hidden_loss + self.d_weight * g_loss + self.beta * (kl_div_qs_pb + kl_shift_qb_pt)
+        if self.rl:
+            # Note: x[t], rewards[t] is a result of actions[t]
+            # Q(s[t], a[t+1]) = r[t+1] + γ max_a Q(s[t+1], a)
+            rewards = labels
+            t1_next = t1 + 1
+            t2_next = t2 + 1
 
-        return loss, bce_diff, kl_div_qs_pb, kl_shift_qb_pt, bce_optimal
+            with torch.no_grad():
+                  # size: bs, action_space
+                q1_next, q2_next = self.target_net.inference_and_q(x, actions, t1_next, t2_next)[:2]
+
+            rewards = rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
+            r1_next = torch.gather(rewards, 2, t1_next[..., None]).view(-1)  # size: bs
+            r2_next = torch.gather(rewards, 2, t2_next[..., None]).view(-1)  # size: bs
+
+            actions = actions[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
+            a1_next = torch.gather(actions, 2, t1_next[..., None]).view(-1)  # size: bs
+            a2_next = torch.gather(actions, 2, t2_next[..., None]).view(-1)  # size: bs
+
+            pred_q1 = torch.gather(q1, 1, a1_next[..., None]).view(-1)
+            pred_q2 = torch.gather(q2, 1, a2_next[..., None]).view(-1)
+            target_q1 = r1_next + self.flags.discount_factor * torch.max(q1_next, dim=1)[0]
+            target_q2 = r2_next + self.flags.discount_factor * torch.max(q2_next, dim=1)[0]
+
+            rl_loss = (((pred_q1 - target_q1) ** 2) + ((pred_q2 - target_q2) ** 2)).mean()
+        else:
+            rl_loss = 0.0
+
+        loss = bce_diff + hidden_loss + self.d_weight * g_loss + self.beta * (kl_div_qs_pb + kl_shift_qb_pt) + rl_loss
+        return collections.OrderedDict([('loss', loss),
+                                        ('bce_diff', bce_diff),
+                                        ('kl_div_qs_pb', kl_div_qs_pb),
+                                        ('kl_shift_qb_pt', kl_shift_qb_pt),
+                                        ('rl_loss', rl_loss),
+                                        ('bce_optimal', bce_optimal)])
 
     def initialize(self, load_file):
         '''Overriding: do not load file during superclass initialization, we do it manually later in init'''
@@ -444,8 +512,10 @@ class GymTDVAE(BaseGymTDVAE):
     def load(self, load_file):
         """Load a model from a saved file."""
         print("* Loading model from", load_file, "...")
-        m_state_dict, o_state_dict, train_steps = torch.load(load_file)
+        m_state_dict, target_net_state_dict, o_state_dict, train_steps = torch.load(load_file)
         self.model.load_state_dict(m_state_dict)
+        if self.target_net is not None and target_net_state_dict is not None:
+            self.target_net.load_state_dict(target_net_state_dict)
         self.optimizer.load_state_dict(o_state_dict)
         self.train_steps = train_steps
         if self.adversarial:
@@ -464,7 +534,11 @@ class GymTDVAE(BaseGymTDVAE):
         for _, fname in pairs[max_files - 1:]:
             pathlib.Path(fname).unlink()
 
-        save_objs = [self.model.state_dict(), self.optimizer.state_dict(), self.train_steps]
+        if self.target_net is not None:
+            target_net = self.target_net.state_dict()
+        else:
+            target_net = None
+        save_objs = [self.model.state_dict(), target_net, self.optimizer.state_dict(), self.train_steps]
         torch.save(save_objs, save_fname)
 
         if self.adversarial:
