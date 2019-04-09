@@ -2,6 +2,7 @@ import importlib
 import time
 
 import numpy as np
+import torch
 
 from readers.gym_reader import GymReader, ReplayBuffer
 from pylego import misc, runner
@@ -14,7 +15,7 @@ class BaseRLRunner(runner.Runner):
 
         emulator = GymReader(flags.env, flags.seq_len, flags.batch_size, flags.threads, np.inf)
         self.emulator_iter = emulator.iter_batches('train', flags.batch_size, threads=flags.threads)
-        self.emulator_state = next(self.emulator_iter).get_next()
+        self.emulator_state = next(self.emulator_iter).get_next()[:3]
 
         reader = ReplayBuffer(emulator, flags.replay_size, flags.iters_per_epoch)
 
@@ -27,6 +28,9 @@ class BaseRLRunner(runner.Runner):
                                  cuda=flags.cuda, load_file=flags.load_file, save_every=flags.save_every,
                                  save_file=flags.save_file, debug=flags.debug)
 
+        # consider history length for simulation to be the expected t seen during TDQVAE training
+        self.simulation_start = flags.seq_len - int(np.ceil(0.5 * (flags.seq_len + flags.t_diff_min))) + 1
+
     def run_epoch(self, epoch, split, train=False, log=True):
         """Iterates the epoch data for a specific split."""
         print('\n* Starting epoch %d, split %s' % (epoch, split), '(train: ' + str(train) + ')')
@@ -38,9 +42,20 @@ class BaseRLRunner(runner.Runner):
                                                threads=self.threads, max_batches=self.max_batches)
         for i in range(self.reader.get_size(split)):
             # Sequence length for deciding actions: int(np.ceil((seq_len - t_diff_max) / 2))
-            actions = None  # TODO compute actions from self.emulator_state using current TDQVAE
-            self.emulator_state = next(self.emulator_iter).get_next(actions)
-            # TODO add emulator_state to replay buffer
+            obs, actions, rewards = self.emulator_state
+            obs = obs[:, self.simulation_start:]
+            actions = actions[:, self.simulation_start:]
+            rewards = rewards[:, self.simulation_start:]
+            obs, actions, rewards = self.model.prepare_batch([obs, actions, rewards])
+
+            self.model.set_train(False)
+            with torch.no_grad():
+                q = self.model.model.compute_q(obs, actions)
+            actions = torch.argmax(q, dim=1).cpu().numpy()
+            self.model.set_train(True)
+
+            self.emulator_state = next(self.emulator_iter).get_next(actions)[:3]
+            self.reader.add(self.emulator_state)  # add trajectory to replay buffer
 
             report = self.clean_report(self.run_batch(next(reader_iter), train=train))
             if self.model.get_train_steps() % self.flags.freeze_every == 0:

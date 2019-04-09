@@ -204,6 +204,32 @@ class TDQVAE(nn.Module):
             self.time_encoding[i, :i+1] = 1
         self.time_encoding = nn.Parameter(self.time_encoding.float(), requires_grad=False)
 
+    def compute_q(self, x, actions):
+        # pre-process image x
+        im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
+        processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
+        processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
+        if actions is not None:
+            actions = self.action_embedding(actions)
+            processed_x = torch.cat([processed_x, actions], -1)
+
+        # aggregate the belief b  TODO rewards should be considered in b
+        b = self.b_rnn(processed_x)  # size: bs, time, layers, dim
+        b = b[:, -1]  # size: bs, layers, dim
+
+        zs = []
+        for layer in range(self.layers - 1, -1, -1):
+            if layer == self.layers - 1:
+                z_mu, z_logvar = self.z_b[layer](b[:, layer])
+            else:
+                z_mu, z_logvar = self.z_b[layer](torch.cat([b[:, layer], z], dim=1))
+
+            z = ops.reparameterize_gaussian(z_mu, z_logvar, self.training)
+            zs.insert(0, z)
+
+        z = torch.cat(zs, dim=1)
+        return self.q_z(z)
+
     def inference_and_q(self, x, actions, t1, t2):
         # pre-process image x
         im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
@@ -213,7 +239,7 @@ class TDQVAE(nn.Module):
             actions = self.action_embedding(actions)
             processed_x = torch.cat([processed_x, actions], -1)
 
-        # aggregate the belief b  TODO actions (and rewards) should be considered in b
+        # aggregate the belief b  TODO rewards should be considered in b
         b = self.b_rnn(processed_x)  # size: bs, time, layers, dim
 
         # replicate b multiple times

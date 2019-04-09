@@ -96,7 +96,7 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
         self.action_conditional_batch.close()
 
 
-class ReplayBuffer(Reader):  # TODO method to add to buffer
+class ReplayBuffer(Reader):
 
     def __init__(self, emulator, buffer_size, iters_per_epoch):
         self.buffer = deque(maxlen=buffer_size)
@@ -105,12 +105,15 @@ class ReplayBuffer(Reader):  # TODO method to add to buffer
             print(' - %d/%d' % (len(self.buffer), buffer_size))
             for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                            max_batches=int(np.ceil(buffer_size / emulator.batch_size))):
-                obs, actions, rewards = conditional_batch.get_next()[:3]
-                self.buffer.extend(zip(obs, actions, rewards))
+                self.add(conditional_batch.get_next()[:3])
                 if len(self.buffer) >= buffer_size:
                     break
         print('* Replay buffer initialized')
         super().__init__({'train': iters_per_epoch})
+
+    def add(self, trajs):
+        obs, actions, rewards = trajs
+        self.buffer.extend(zip(obs, actions, rewards))
 
     def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
                      max_batches=-1):
