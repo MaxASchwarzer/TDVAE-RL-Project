@@ -35,6 +35,7 @@ if __name__ == '__main__':
     arg(parser, 'replay_size', type=int, default=10000, help='Experience replay buffer size')
     arg(parser, 'freeze_every', type=int, default=10000, help='Freeze a Q network every this many steps')
     arg(parser, 'samples_per_seq', type=int, default=1, help='(t1, t2) samples per input sequence')
+    arg(parser, 'discount_factor', type=float, default=0.99, help='RL discount factor (aka gamma)')
     arg(parser, 'h_size', type=int, default=32, help='Base #channels for resnets before downscaling.')
     arg(parser, 'd_size', type=int, default=16, help='Base #channels for discriminator before downscaling.')
     arg(parser, 'b_size', type=int, default=128, help='belief size')
