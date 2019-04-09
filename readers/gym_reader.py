@@ -103,22 +103,33 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
 
 class ReplayBuffer(Reader):
 
-    def __init__(self, emulator, buffer_size, iters_per_epoch):
+    def __init__(self, emulator, buffer_size, iters_per_epoch, skip_init=False):
         self.buffer = deque(maxlen=buffer_size)
-        print('* Initializing replay buffer')  # TODO dump initial replay buffer state
-        while len(self.buffer) < buffer_size:
-            print(' - %d/%d' % (len(self.buffer), buffer_size))
-            for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
-                                                           max_batches=int(np.ceil(buffer_size / emulator.batch_size))):
-                self.add(conditional_batch.get_next()[:3])
-                if len(self.buffer) >= buffer_size:
-                    break
-        print('* Replay buffer initialized')
+        if skip_init:
+            print('* Skipping replay buffer initialization')
+        else:
+            print('* Initializing replay buffer')
+            while len(self.buffer) < buffer_size:
+                print(' - %d/%d' % (len(self.buffer), buffer_size))
+                for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
+                                                               max_batches=int(np.ceil(buffer_size /
+                                                                                       emulator.batch_size))):
+                    self.add(conditional_batch.get_next()[:3])
+                    if len(self.buffer) >= buffer_size:
+                        break
+            print('* Replay buffer initialized')
         super().__init__({'train': iters_per_epoch})
 
     def add(self, trajs):
         obs, actions, rewards = trajs
         self.buffer.extend(zip(obs, actions, rewards))
+
+    def get_buffer(self):
+        return self.buffer
+
+    def load_buffer(self, buffer):
+        print('* Loading external replay buffer')
+        self.buffer = buffer
 
     def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
                      max_batches=-1):

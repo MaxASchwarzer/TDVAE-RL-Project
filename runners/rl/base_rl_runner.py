@@ -19,16 +19,17 @@ class BaseRLRunner(runner.Runner):
         self.action_space = emulator.action_space()
         self.eps_decay = misc.LinearDecay(flags.eps_decay_start, flags.eps_decay_end, 1.0, flags.eps_final)
 
-        reader = ReplayBuffer(emulator, flags.replay_size, flags.iters_per_epoch)
+        reader = ReplayBuffer(emulator, flags.replay_size, flags.iters_per_epoch, skip_init=bool(flags.load_file))
 
         summary_dir = flags.log_dir + '/summary'
         super().__init__(reader, flags.batch_size, flags.epochs, summary_dir, log_keys=log_keys,
                          threads=flags.threads, print_every=flags.print_every, visualize_every=flags.visualize_every,
                          max_batches=flags.max_batches, *args, **kwargs)
         model_class = misc.get_subclass(importlib.import_module('models.' + self.flags.model), model_class)
-        self.model = model_class(self.flags, action_space=self.action_space, rl=True, optimizer=flags.optimizer,
-                                 learning_rate=flags.learning_rate, cuda=flags.cuda, load_file=flags.load_file,
-                                 save_every=flags.save_every, save_file=flags.save_file, debug=flags.debug)
+        self.model = model_class(self.flags, action_space=self.action_space, rl=True, replay_buffer=reader,
+                                 optimizer=flags.optimizer, learning_rate=flags.learning_rate, cuda=flags.cuda,
+                                 load_file=flags.load_file, save_every=flags.save_every, save_file=flags.save_file,
+                                 debug=flags.debug)
 
         # consider history length for simulation to be the expected t seen during TDQVAE training
         self.simulation_start = flags.seq_len - int(np.ceil(0.5 * (flags.seq_len + flags.t_diff_min))) + 1

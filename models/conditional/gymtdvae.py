@@ -400,8 +400,10 @@ class TDQVAE(nn.Module):
 
 class GymTDQVAE(BaseGymTDVAE):
 
-    def __init__(self, flags, model=None, action_space=20, rl=False, *args, **kwargs):
+    def __init__(self, flags, model=None, action_space=20, rl=False, replay_buffer=None, *args, **kwargs):
         self.rl = rl
+        self.replay_buffer = replay_buffer
+
         self.adversarial = flags.adversarial
         self.beta = flags.beta
         self.d_weight = flags.d_weight
@@ -497,7 +499,9 @@ class GymTDQVAE(BaseGymTDVAE):
         else:
             rl_loss = 0.0
 
-        loss = bce_diff + hidden_loss + self.d_weight * g_loss + self.beta * (kl_div_qs_pb + kl_shift_qb_pt) + rl_loss
+        tdvae_loss = bce_diff + hidden_loss + self.d_weight * g_loss + self.beta * (kl_div_qs_pb + kl_shift_qb_pt)
+        loss = self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss
+
         return collections.OrderedDict([('loss', loss),
                                         ('bce_diff', bce_diff),
                                         ('kl_div_qs_pb', kl_div_qs_pb),
@@ -512,10 +516,11 @@ class GymTDQVAE(BaseGymTDVAE):
     def load(self, load_file):
         """Load a model from a saved file."""
         print("* Loading model from", load_file, "...")
-        m_state_dict, target_net_state_dict, o_state_dict, train_steps = torch.load(load_file)
+        m_state_dict, target_net_state_dict, o_state_dict, train_steps, replay_buffer = torch.load(load_file)
         self.model.load_state_dict(m_state_dict)
         if self.target_net is not None and target_net_state_dict is not None:
             self.target_net.load_state_dict(target_net_state_dict)
+            self.replay_buffer.load_buffer(replay_buffer)
         self.optimizer.load_state_dict(o_state_dict)
         self.train_steps = train_steps
         if self.adversarial:
@@ -538,7 +543,8 @@ class GymTDQVAE(BaseGymTDVAE):
             target_net = self.target_net.state_dict()
         else:
             target_net = None
-        save_objs = [self.model.state_dict(), target_net, self.optimizer.state_dict(), self.train_steps]
+        save_objs = [self.model.state_dict(), target_net, self.optimizer.state_dict(), self.train_steps,
+                     self.replay_buffer.get_buffer()]
         torch.save(save_objs, save_fname)
 
         if self.adversarial:
