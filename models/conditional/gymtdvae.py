@@ -404,9 +404,6 @@ class GymTDQVAE(BaseGymTDVAE):
             self.target_net = TDQVAE(*model_args, **model_kwargs)
             self.target_net.eval()
             self.target_net.to(self.device)
-        else:
-            zero = torch.zeros(1)
-            self.zero = zero.to(self.device)
 
         if flags.load_file:
             self.load(flags.load_file)
@@ -453,23 +450,15 @@ class GymTDQVAE(BaseGymTDVAE):
 
             # Note: x[t], rewards[t] is a result of actions[t]
             # Q(s[t], a[t+1]) = r[t+1] + γ max_a Q(s[t+1], a)
-            rewards = rewards[None, ...].expand(self.samples_per_seq, -1, -1)  # size: copy, bs, time
+            rewards = rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
             r1_next = torch.gather(rewards, 2, t1_next[..., None]).view(-1)
             r2_next = torch.gather(rewards, 2, t2_next[..., None]).view(-1)
             with torch.no_grad():
                 q1_next, q2_next = self.target_net.inference_and_q(x, actions, t1_next, t2_next)[:2]
 
-            print('q1', q1.size())
-            print('q2', q2.size())
-            print('q1_next', q1_next.size())
-            print('q2_next', q2_next.size())
-            print('r1_next', r1_next.size())
-            print('r2_next', r2_next.size())
-            print(1/0)
-
-            rl_loss = self.zero  # TODO Q learning loss
+            rl_loss = 0.0  # TODO Q learning loss
         else:
-            rl_loss = self.zero
+            rl_loss = 0.0
 
         loss = bce_diff + hidden_loss + self.d_weight * g_loss + self.beta * (kl_div_qs_pb + kl_shift_qb_pt) + rl_loss
         return collections.OrderedDict([('loss', loss),
