@@ -380,7 +380,6 @@ class GymTDQVAE(BaseGymTDVAE):
         self.beta = flags.beta
         self.d_weight = flags.d_weight
         self.d_steps = flags.d_steps
-        self.zero = torch.zeros(1)
 
         if model is None:
             model_args = [(3, 112, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
@@ -405,6 +404,9 @@ class GymTDQVAE(BaseGymTDVAE):
             self.target_net = TDQVAE(*model_args, **model_kwargs)
             self.target_net.eval()
             self.target_net.to(self.device)
+        else:
+            zero = torch.zeros(1)
+            self.zero = zero.to(self.device)
 
         if flags.load_file:
             self.load(flags.load_file)
@@ -470,12 +472,12 @@ class GymTDQVAE(BaseGymTDVAE):
             rl_loss = self.zero
 
         loss = bce_diff + hidden_loss + self.d_weight * g_loss + self.beta * (kl_div_qs_pb + kl_shift_qb_pt) + rl_loss
-        return collections.OrderedDict([('loss', loss.item()),
-                                        ('bce_diff', bce_diff.item()),
-                                        ('kl_div_qs_pb', kl_div_qs_pb.item()),
-                                        ('kl_shift_qb_pt', kl_shift_qb_pt.item()),
-                                        ('rl_loss', rl_loss.item()),
-                                        ('bce_optimal', bce_optimal.item())])
+        return collections.OrderedDict([('loss', loss),
+                                        ('bce_diff', bce_diff),
+                                        ('kl_div_qs_pb', kl_div_qs_pb),
+                                        ('kl_shift_qb_pt', kl_shift_qb_pt),
+                                        ('rl_loss', rl_loss),
+                                        ('bce_optimal', bce_optimal)])
 
     def initialize(self, load_file):
         '''Overriding: do not load file during superclass initialization, we do it manually later in init'''

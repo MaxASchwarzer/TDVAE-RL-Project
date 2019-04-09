@@ -1,8 +1,8 @@
 from models.baseconditional import BaseGymTDVAE
-from ..conditional.base_runner import BaseRunner
+from .base_rl_runner import BaseRLRunner
 
 
-class GymRLRunner(BaseRunner):
+class GymRLRunner(BaseRLRunner):
 
     def __init__(self, flags, *args, **kwargs):
         super().__init__(flags, BaseGymTDVAE, ['loss', 'rl_loss', 'bce_diff', 'kl_div_qs_pb', 'kl_shift_qb_pt'])

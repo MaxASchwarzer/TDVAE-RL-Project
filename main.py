@@ -5,6 +5,7 @@ from pylego.misc import add_argument as arg
 
 from runners.imgtdvae.tdvaerunner import TDVAERunner
 from runners.conditional.gym_runner import GymRunner
+from runners.rl.rl_runner import GymRLRunner
 
 
 if __name__ == '__main__':
@@ -30,6 +31,7 @@ if __name__ == '__main__':
     arg(parser, 'd_weight', type=float, default=10, help='Parameter for discriminator loss scale')
     arg(parser, 'grad_norm', type=float, default=5.0, help='gradient norm clipping (-1 to disable)')
     arg(parser, 'adversarial', type=bool, default=False, help='Use an auxiliary adversarial loss on reconstructions')
+    arg(parser, 'rl', type=bool, default=False, help='Do RL')
     arg(parser, 'seq_len', type=int, default=20, help='sequence length')
     arg(parser, 'batch_size', type=int, default=64, help='batch size')
     arg(parser, 'replay_size', type=int, default=10000, help='Experience replay buffer size')
@@ -90,7 +92,10 @@ if __name__ == '__main__':
     flags.save_file = flags.log_dir + '/' + flags.save_file
 
     if flags.model.startswith('conditional.'):
-        runner = GymRunner
+        if flags.rl:
+            runner = GymRLRunner
+        else:
+            runner = GymRunner
         val_split = None
         test_split = None
     elif flags.model.startswith('tdvae.'):

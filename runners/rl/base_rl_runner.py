@@ -43,18 +43,9 @@ class BaseRLRunner(runner.Runner):
             self.emulator_state = next(self.emulator_iter).get_next(actions)
             # TODO add emulator_state to replay buffer
 
-            ret_report = self.run_batch(next(reader_iter), train=train)
+            report = self.clean_report(self.run_batch(next(reader_iter), train=train))
             if self.model.get_train_steps() % self.flags.freeze_every == 0:
                 self.model.update_target_net()
-
-            if not ret_report:
-                report = collections.OrderedDict()
-            elif not isinstance(ret_report, collections.OrderedDict):
-                report = collections.OrderedDict()
-                for k in sorted(ret_report.keys()):
-                    report[k] = ret_report[k]
-            else:
-                report = ret_report
 
             report['time_'] = time.time() - timestamp
             if train:
