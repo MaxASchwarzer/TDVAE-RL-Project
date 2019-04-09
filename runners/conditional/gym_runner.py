@@ -11,8 +11,6 @@ class GymRunner(BaseRunner):
     def __init__(self, flags, *args, **kwargs):
         super().__init__(flags, BaseGymTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'kl_shift_qb_pt'])
         self.maxlen = flags.seq_len
-        self.adv_start = flags.d_start
-        self.d_weight = flags.d_weight
 
     def run_batch(self, batch, train=False):
         data = batch.get_next()

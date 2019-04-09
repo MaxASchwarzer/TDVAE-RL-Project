@@ -36,10 +36,12 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
     def get_next(self, actions=None, fill_buffer=True, outer_frameskip=2):
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
-            actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
+            in_actions = [self.sample_env.action_space.sample() for i in range(self.batch_size)]
+        else:
+            in_actions = actions
 
         for _ in range(outer_frameskip):
-            self.env.step_async(actions)
+            self.env.step_async(in_actions)
             obs, rewards, done, meta = self.env.step_wait()
             obs = np.transpose(obs, axes=(0, 3, 1, 2))
             obs = torch.tensor(obs).float() / 255
@@ -47,7 +49,7 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
                 obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
                 obs = F.avg_pool2d(obs, (2, 2,), stride=2)
 
-            for i, val in enumerate([obs, actions, rewards, done, meta]):
+            for i, val in enumerate([obs, in_actions, rewards, done, meta]):
                 self.buffers[i].append(val)
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
