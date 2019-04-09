@@ -444,19 +444,30 @@ class GymTDQVAE(BaseGymTDVAE):
             hidden_loss = 0
 
         if self.rl:
+            # Note: x[t], rewards[t] is a result of actions[t]
+            # Q(s[t], a[t+1]) = r[t+1] + γ max_a Q(s[t+1], a)
             rewards = labels
             t1_next = t1 + 1
             t2_next = t2 + 1
 
-            # Note: x[t], rewards[t] is a result of actions[t]
-            # Q(s[t], a[t+1]) = r[t+1] + γ max_a Q(s[t+1], a)
-            rewards = rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
-            r1_next = torch.gather(rewards, 2, t1_next[..., None]).view(-1)
-            r2_next = torch.gather(rewards, 2, t2_next[..., None]).view(-1)
             with torch.no_grad():
+                  # size: bs, action_space
                 q1_next, q2_next = self.target_net.inference_and_q(x, actions, t1_next, t2_next)[:2]
 
-            rl_loss = 0.0  # TODO Q learning loss
+            rewards = rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
+            r1_next = torch.gather(rewards, 2, t1_next[..., None]).view(-1)  # size: bs
+            r2_next = torch.gather(rewards, 2, t2_next[..., None]).view(-1)  # size: bs
+
+            actions = actions[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
+            a1_next = torch.gather(actions, 2, t1_next[..., None]).view(-1)  # size: bs
+            a2_next = torch.gather(actions, 2, t2_next[..., None]).view(-1)  # size: bs
+
+            pred_q1 = torch.gather(q1, 1, a1_next[..., None]).view(-1)
+            pred_q2 = torch.gather(q2, 1, a2_next[..., None]).view(-1)
+            target_q1 = r1_next + self.flags.discount_factor * torch.max(q1_next, dim=1)[0]
+            target_q2 = r2_next + self.flags.discount_factor * torch.max(q2_next, dim=1)[0]
+
+            rl_loss = (((pred_q1 - target_q1) ** 2) + ((pred_q2 - target_q2) ** 2)).mean()
         else:
             rl_loss = 0.0
 

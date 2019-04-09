@@ -166,7 +166,8 @@ def worker(remote, parent_remote, env_fn_wrappers):
                 rewards.append(reward)
                 dones.append(done)
                 infos.append(info)
-            remote.send((np.stack(obs, 0), np.stack(rewards, 0), np.stack(dones, 0), np.stack(infos, 0)))
+            remote.send((np.array(obs, dtype=np.float32), np.array(rewards, dtype=np.float32), np.array(dones),
+                         np.array(infos)))
         elif cmd == 'reset':
             ob = [env.reset() for env in envs]
             ob = np.stack(ob, 0)
