@@ -482,7 +482,10 @@ class GymTDQVAE(BaseGymTDVAE):
 
             with torch.no_grad():
                   # size: bs, action_space
-                q1_next, q2_next = self.target_net.inference_and_q(x, actions, t1_next, t2_next)[:2]
+                q1_next_target, q2_next_target = self.target_net.inference_and_q(x, actions, t1_next, t2_next)[:2]
+                q1_next_index, q2_next_index = self.model.inference_and_q(x, actions, t1_next, t2_next)[:2]
+                q1_next_index = torch.argmax(q1_next_index, dim=1, keepdim=True)
+                q2_next_index = torch.argmax(q2_next_index, dim=1, keepdim=True)
 
             rewards = rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
             r1_next = torch.gather(rewards, 2, t1_next[..., None]).view(-1)  # size: bs
@@ -492,11 +495,12 @@ class GymTDQVAE(BaseGymTDVAE):
             a1_next = torch.gather(actions, 2, t1_next[..., None]).view(-1)  # size: bs
             a2_next = torch.gather(actions, 2, t2_next[..., None]).view(-1)  # size: bs
 
-            # TODO Double DQN
             pred_q1 = torch.gather(q1, 1, a1_next[..., None]).view(-1)
             pred_q2 = torch.gather(q2, 1, a2_next[..., None]).view(-1)
-            target_q1 = r1_next + self.flags.discount_factor * torch.max(q1_next, dim=1)[0]
-            target_q2 = r2_next + self.flags.discount_factor * torch.max(q2_next, dim=1)[0]
+            q1_next = torch.gather(q1_next_target, 1, q1_next_index).view(-1)
+            q2_next = torch.gather(q2_next_target, 1, q2_next_index).view(-1)
+            target_q1 = r1_next + self.flags.discount_factor * q1_next
+            target_q2 = r2_next + self.flags.discount_factor * q2_next
 
             # TODO Huber loss
             rl_loss = (self.flags.tdvae_weight * ((pred_q1 - target_q1) ** 2) + ((pred_q2 - target_q2) ** 2)).mean()
