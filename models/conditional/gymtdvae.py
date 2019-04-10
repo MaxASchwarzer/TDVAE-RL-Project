@@ -495,7 +495,7 @@ class GymTDQVAE(BaseGymTDVAE):
             target_q1 = r1_next + self.flags.discount_factor * torch.max(q1_next, dim=1)[0]
             target_q2 = r2_next + self.flags.discount_factor * torch.max(q2_next, dim=1)[0]
 
-            rl_loss = (((pred_q1 - target_q1) ** 2) + ((pred_q2 - target_q2) ** 2)).mean()
+            rl_loss = (self.flags.tdvae_weight * ((pred_q1 - target_q1) ** 2) + ((pred_q2 - target_q2) ** 2)).mean()
         else:
             rl_loss = 0.0
 
