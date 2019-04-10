@@ -230,7 +230,7 @@ class TDQVAE(nn.Module):
         z = torch.cat(zs, dim=1)
         return self.q_z(z)
 
-    def inference_and_q(self, x, actions, t1, t2):
+    def inference_and_q(self, x, actions, t1, t2):  # TODO get both q1, q2 from x->z->q
         # pre-process image x
         im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
