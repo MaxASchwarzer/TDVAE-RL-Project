@@ -36,7 +36,7 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         self.action_space = sample_env.action_space.n
         sample_env.close()
 
-    def get_next(self, actions=None, fill_buffer=True, outer_frameskip=2):
+    def get_next(self, actions=None, fill_buffer=True, outer_frameskip=2):  # TODO normalize images
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
             in_actions = np.random.randint(0, self.action_space, size=self.batch_size)
@@ -101,7 +101,7 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
         self.action_conditional_batch.close()
 
 
-class ReplayBuffer(Reader):
+class ReplayBuffer(Reader):  # TODO prioritized experience replay
 
     def __init__(self, emulator, buffer_size, iters_per_epoch, skip_init=False):
         self.buffer = deque(maxlen=buffer_size)

@@ -52,7 +52,7 @@ class BaseRLRunner(runner.Runner):
 
             self.model.set_train(False)
             with torch.no_grad():
-                q = self.model.model.compute_q(obs, actions)
+                q = self.model.model.compute_q(obs, actions)  # TODO log sum of rewards
             selected_actions = torch.argmax(q, dim=1).cpu().numpy()
             random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
             self.model.set_train(True)
