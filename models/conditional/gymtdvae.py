@@ -131,7 +131,7 @@ class ConvDecoder(nn.Module):
         return torch.sigmoid(x4.flatten(1, -1))
 
 
-class QNetwork(nn.Module):  # TODO Dueling DQN
+class AdvantageNetwork(nn.Module):
 
     def __init__(self, z_size, hidden_size, action_space):
         super().__init__()
@@ -144,6 +144,35 @@ class QNetwork(nn.Module):  # TODO Dueling DQN
         t = torch.tanh(self.fc2(t))
         p = torch.sigmoid(self.fc3(t))
         return p
+
+
+class ValueNetwork(nn.Module):
+
+    def __init__(self, z_size, hidden_size):
+        super().__init__()
+        self.fc1 = nn.Linear(z_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, 1)
+
+    def forward(self, z):
+        t = torch.tanh(self.fc1(z))
+        t = torch.tanh(self.fc2(t))
+        p = torch.sigmoid(self.fc3(t))
+        return p
+
+
+class QNetwork(nn.Module):
+
+    def __init__(self, z_size, hidden_size, action_space):
+        super().__init__()
+        self.adv = AdvantageNetwork(z_size, hidden_size, action_space)
+        self.val = ValueNetwork(z_size, hidden_size)
+
+    def forward(self, z):
+        adv = self.adv(z)  # size: bs, action_space
+        adv = adv - adv.mean(dim=1, keepdim=True)
+        val = self.val(z)  # size: bs, 1
+        return adv + val
 
 
 class TDQVAE(nn.Module):
