@@ -62,7 +62,7 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
             obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
             obs = (obs - self.img_min) / (self.img_max - self.img_min)
 
-            # FIXME crop images instead of filling zeros, this is wasting compute
+            # TODO crop images instead of filling zeros, this is wasting compute
             if self.img_hcrop_top > 0:
                 obs[:, :, :self.img_hcrop_top].fill_(0.5)
             if self.img_hcrop_bottom > 0:
