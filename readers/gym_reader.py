@@ -1,5 +1,6 @@
 from collections import deque
 from multiprocessing import Process, Pipe
+import pickle
 
 import gym
 import gym_vecenv as vecenv
@@ -20,7 +21,7 @@ def make_env(env_name, frameskip=3, steps=1000000, secs=100000):
 
 class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
-    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=3):
+    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=3, data_dir='data'):
         self.env_name = env
         self.seq_len = seq_len
         self.batch_size = batch_size
@@ -29,14 +30,20 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         env_fcns = [fn for i in range(batch_size)]
         self.env = SubprocVecEnv(env_fcns, n_workers=threads)
         self.env.reset()
-        self.buffers = [deque(maxlen=seq_len) for i in range(5)]
+        self.buffers = [deque(maxlen=seq_len) for i in range(6)]
         self.downsample = downsample
 
         sample_env = gym.make(env)
         self.action_space = sample_env.action_space.n
         sample_env.close()
 
-    def get_next(self, actions=None, fill_buffer=True, outer_frameskip=2):  # TODO normalize images
+        with open(data_dir + '/' + env + '/img_stats.pk', 'rb') as f:
+            (self.img_mean, self.img_std, self.img_min, self.img_max, self.img_true_min, self.img_true_max,
+             self.img_hcrop_top, self.img_hcrop_bottom, self.img_vcrop_left, self.img_vcrop_right) = pickle.load(f)
+            self.img_mean = torch.tensor(self.img_mean)
+            self.img_std = torch.tensor(self.img_std)
+
+    def get_next(self, actions=None, fill_buffer=True, outer_frameskip=2):
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
             in_actions = np.random.randint(0, self.action_space, size=self.batch_size)
@@ -45,14 +52,27 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
         for _ in range(outer_frameskip):
             self.env.step_async(in_actions)
-            obs, rewards, done, meta = self.env.step_wait()
-            obs = np.transpose(obs, axes=(0, 3, 1, 2))
-            obs = torch.tensor(obs).float() / 255
+            orig_obs, rewards, done, meta = self.env.step_wait()
+            orig_obs = np.transpose(orig_obs, axes=(0, 3, 1, 2))  # original unnormalized images
+            obs = torch.tensor(orig_obs).float() / 255
             if "Pong" in self.env_name or "Seaquest" in self.env_name and self.downsample:
                 obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
                 obs = F.avg_pool2d(obs, (2, 2,), stride=2)
 
-            for i, val in enumerate([obs, in_actions, rewards, done, meta]):
+            obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
+            obs = (obs - self.img_min) / (self.img_max - self.img_min)
+
+            # FIXME crop images instead of filling zeros, this is wasting compute
+            if self.img_hcrop_top > 0:
+                obs[:, :, :self.img_hcrop_top].fill_(0.5)
+            if self.img_hcrop_bottom > 0:
+                obs[:, :, -self.img_hcrop_bottom:].fill_(0.5)
+            if self.img_vcrop_left > 0:
+                obs[:, :, :, :self.img_vcrop_left].fill_(0.5)
+            if self.img_vcrop_right > 0:
+                obs[:, :, :, -self.img_vcrop_right:].fill_(0.5)
+
+            for i, val in enumerate([obs, in_actions, rewards, done, meta, orig_obs]):
                 self.buffers[i].append(val)
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:

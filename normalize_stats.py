@@ -48,7 +48,9 @@ if __name__ == '__main__':
     batches -= mean
     batches /= std
     # batches = batches.mean(axis=1, keepdims=True)
-    print(batches.min(), batches.max())
+    true_min = batches.min()
+    true_max = batches.max()
+    print(true_min, true_max)
     bmin = np.percentile(batches, 2)
     bmax = np.percentile(batches, 98)
     print(bmin, bmax)
@@ -58,5 +60,5 @@ if __name__ == '__main__':
     # misc.save_comparison_grid('example2.png', batches[:16], border_shade=0.8)
 
     with open(DATA_DIR + '/img_stats.pk', 'wb') as f:
-        pickle.dump([mean, std, bmin, bmax, 23, 23, 4, 0], f)
+        pickle.dump([mean, std, bmin, bmax, true_min, true_max, 23, 23, 4, 0], f)
     print('* Stats dumped!')

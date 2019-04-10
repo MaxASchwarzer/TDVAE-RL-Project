@@ -24,6 +24,7 @@ class GymRunner(BaseRunner):
         bs = min(self.batch_size, 15)
         batch = next(self.reader.iter_batches(split, bs, shuffle=True, partial_batching=True, threads=self.threads,
                                               max_batches=1))
+        mean, std, imin, imax = batch.img_mean.numpy(), batch.img_std.numpy(), batch.img_true_min, batch.img_true_max
         images, actions = batch.get_next()[:2]
         images, actions = self.model.prepare_batch([images[:, :t + 2], actions[:, :t+2]])
         out = self.model.run_batch([images, t, n, actions], visualize=True)
@@ -33,6 +34,7 @@ class GymRunner(BaseRunner):
         vis_data = np.concatenate([batch, out], axis=1)
         bs, seq_len = vis_data.shape[:2]
         vis_data = vis_data.reshape(bs*seq_len, batch.shape[2], batch.shape[3], batch.shape[4])
+        vis_data = np.clip((vis_data * (imax - imin) + imin) * std + mean, 0.0, 1.0)
         return vis_data, (bs, seq_len)
 
     def post_epoch_visualize(self, epoch, split):
