@@ -21,10 +21,12 @@ def make_env(env_name, frameskip=3, steps=1000000, secs=100000):
 
 class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
-    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=3, data_dir='data'):
+    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=3, raw=False,
+                 data_dir='data'):
         self.env_name = env
         self.seq_len = seq_len
         self.batch_size = batch_size
+        self.raw = raw  # return raw images
 
         fn = lambda: make_env(env, frameskip=inner_frameskip)
         env_fcns = [fn for i in range(batch_size)]
@@ -37,11 +39,12 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         self.action_space = sample_env.action_space.n
         sample_env.close()
 
-        with open(data_dir + '/' + env + '/img_stats.pk', 'rb') as f:
-            (self.img_mean, self.img_std, self.img_min, self.img_max, self.img_true_min, self.img_true_max,
-             self.img_hcrop_top, self.img_hcrop_bottom, self.img_vcrop_left, self.img_vcrop_right) = pickle.load(f)
-            self.img_mean = torch.tensor(self.img_mean)
-            self.img_std = torch.tensor(self.img_std)
+        if not raw:
+            with open(data_dir + '/' + env + '/img_stats.pk', 'rb') as f:
+                (self.img_mean, self.img_std, self.img_min, self.img_max, self.img_true_min, self.img_true_max,
+                self.img_hcrop_top, self.img_hcrop_bottom, self.img_vcrop_left, self.img_vcrop_right) = pickle.load(f)
+                self.img_mean = torch.tensor(self.img_mean)
+                self.img_std = torch.tensor(self.img_std)
 
     def get_next(self, actions=None, fill_buffer=True, outer_frameskip=2):
         if actions is None:
@@ -55,22 +58,25 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
             orig_obs, rewards, done, meta = self.env.step_wait()
             orig_obs = np.transpose(orig_obs, axes=(0, 3, 1, 2))  # original unnormalized images
             obs = torch.tensor(orig_obs).float() / 255
-            if "Pong" in self.env_name or "Seaquest" in self.env_name and self.downsample:
-                obs = F.pad(obs, (0, 0, 0, 14), mode="constant", value=0)
-                obs = F.avg_pool2d(obs, (2, 2,), stride=2)
 
-            obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
-            obs = (obs - self.img_min) / (self.img_max - self.img_min)
+            if not self.raw:
+                obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
+                obs = (obs - self.img_min) / (self.img_max - self.img_min)
 
-            # TODO crop images instead of filling zeros, this is wasting compute
-            if self.img_hcrop_top > 0:
-                obs[:, :, :self.img_hcrop_top].fill_(0.5)
-            if self.img_hcrop_bottom > 0:
-                obs[:, :, -self.img_hcrop_bottom:].fill_(0.5)
-            if self.img_vcrop_left > 0:
-                obs[:, :, :, :self.img_vcrop_left].fill_(0.5)
-            if self.img_vcrop_right > 0:
-                obs[:, :, :, -self.img_vcrop_right:].fill_(0.5)
+                # TODO crop images instead of filling zeros, this is wasting compute
+                h, w = obs.size()[2:]
+                obs = obs[:, :, self.img_hcrop_top:h-self.img_hcrop_bottom, self.img_vcrop_left:w-self.img_vcrop_right]
+                h, w = obs.size()[2:]
+                pad_h, pad_w = 160 - h, 160 - w
+                if self.downsample:
+                    obs = F.avg_pool2d(obs, (2, 2,), stride=2)
+                    pad_h = np.ceil(pad_h / 2.0)
+                    pad_w = np.ceil(pad_w / 2.0)
+                pad_h /= 2.0
+                pad_w /= 2.0
+
+                obs = F.pad(obs, (int(np.ceil(pad_w)), int(np.floor(pad_w)), int(np.ceil(pad_h)), int(np.floor(pad_h))),
+                            mode="constant", value=0.5)
 
             for i, val in enumerate([obs, in_actions, rewards, done, meta, orig_obs]):
                 self.buffers[i].append(val)
@@ -90,13 +96,13 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
 class GymReader(Reader):  # TODO move generalized form of this to pylego
 
-    def __init__(self, env, seq_len, batch_size, threads, iters_per_epoch):
+    def __init__(self, env, seq_len, batch_size, threads, iters_per_epoch, raw=False):
         self.env = env
         self.seq_len = seq_len
         self.batch_size = batch_size
         self.threads = threads
         super().__init__({'train': iters_per_epoch})
-        self.action_conditional_batch = ActionConditionalBatch(env, seq_len, batch_size, threads)
+        self.action_conditional_batch = ActionConditionalBatch(env, seq_len, batch_size, threads, raw=raw)
 
     def action_space(self):
         return self.action_conditional_batch.action_space

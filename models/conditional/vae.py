@@ -109,7 +109,7 @@ class VAE(nn.Module):
 class GymVAE(GymTDVAE):
 
     def __init__(self, flags, *args, **kwargs):
-        model = VAE((3, 112, 80), flags.h_size, 64, flags.b_size, flags.z_size, flags.layers,
+        model = VAE((3, 80, 80), flags.h_size, 64, flags.b_size, flags.z_size, flags.layers,
                     flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, action_space=20)
         super().__init__(flags, model=model, *args, **kwargs)
 

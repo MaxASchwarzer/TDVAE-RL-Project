@@ -15,7 +15,7 @@ if __name__ == '__main__':
         print('rewards', rewards.shape)
         print()
         if i < 3:
-            batch = obs.numpy().reshape(obs.shape[0] * obs.shape[1], 3, 112, 80)
+            batch = obs.numpy().reshape(obs.shape[0] * obs.shape[1], 3, 80, 80)
             save_comparison_grid('eseq%d.png' % i, batch, rows_cols=obs.shape[:2], retain_sequence=True)
             print(actions)
             print()
@@ -28,7 +28,7 @@ if __name__ == '__main__':
         print('rewards', rewards.shape)
         print()
         if i < 3:
-            batch = obs.numpy().reshape(4 * 6, 3, 112, 80)
+            batch = obs.numpy().reshape(4 * 6, 3, 80, 80)
             save_comparison_grid('rseq%d.png' % i, batch, rows_cols=(4, 6), retain_sequence=True)
             print(actions)
             print()

@@ -35,7 +35,7 @@ class Discriminator(torch.nn.Module):
         self.relu5 = nn.LeakyReLU(0.2, inplace=True)
 
         # The output of D is no longer a probability, we do not apply sigmoid at the output of D.
-        self.final = nn.Conv2d(in_channels=d_size*(2**4), out_channels=1, kernel_size=(7, 5), stride=1, padding=0)
+        self.final = nn.Conv2d(in_channels=d_size*(2**4), out_channels=1, kernel_size=(5, 5), stride=1, padding=0)
 
     def forward(self, x):
         x1 = self.conv1(x)
@@ -139,7 +139,7 @@ def prime_facs(n):
 
 class SAGANGenerator(nn.Module):
     """Generator."""
-    def __init__(self, image_size=(3, 112, 80), z_dim=32, d_hidden=32):
+    def __init__(self, image_size=(3, 80, 80), z_dim=32, d_hidden=32):
         super(SAGANGenerator, self).__init__()
         layers = []
 

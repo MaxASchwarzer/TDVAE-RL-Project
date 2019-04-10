@@ -14,13 +14,14 @@ DATA_DIR = 'data/' + GAME
 
 def get_batches(batches_fname):
     if not Path(batches_fname).is_file():
-        emulator = GymReader(GAME, 6, 8, 6, np.inf)
-        reader = ReplayBuffer(emulator, 5000, 300)
+        emulator = GymReader(GAME, 2, 16, 6, np.inf, raw=True)
+        reader = ReplayBuffer(emulator, 5000, 512)
 
         batches = []
         print('* Collecting batches')
-        for batch in reader.iter_batches('train', 8):
-            batch = batch[0].numpy().reshape(-1, 3, 112, 80)
+        for i, batch in enumerate(reader.iter_batches('train', 16, max_batches=256)):
+            batch = batch[0].numpy()
+            batch = batch.reshape(-1, *batch.shape[2:])
             batches.append(batch)
 
         print('* Dumping batches')
@@ -40,14 +41,16 @@ if __name__ == '__main__':
         pass
 
     batches = get_batches(DATA_DIR + '/norm_batches.pk')
-    # misc.save_comparison_grid('example1.png', batches[:16], border_shade=0.8)
-    batches = batches[:, :, 23:-23, 4:]
+    misc.save_comparison_grid('example1.png', batches[:16], border_shade=0.8)
+    h, w = batches.shape[2:]
+    crop_top, crop_bottom, crop_left, crop_right = 46, 35, 8, 0
+    batches = batches[:, :, crop_top:h-crop_bottom, crop_left:w-crop_right]
     flat_batches = batches.transpose(1, 0, 2, 3).reshape(3, -1)
     mean = flat_batches.mean(axis=1)[None, :, None, None]
     std = flat_batches.std(axis=1)[None, :, None, None]
     batches -= mean
     batches /= std
-    # batches = batches.mean(axis=1, keepdims=True)
+    # batches = batches.mean(axis=1, keepdims=True)  # greyscale
     true_min = batches.min()
     true_max = batches.max()
     print(true_min, true_max)
@@ -57,8 +60,8 @@ if __name__ == '__main__':
     batches = np.clip(batches, bmin, bmax)
     batches -= batches.min()
     batches /= batches.max()
-    # misc.save_comparison_grid('example2.png', batches[:16], border_shade=0.8)
+    misc.save_comparison_grid('example2.png', batches[:16], border_shade=0.8)
 
     with open(DATA_DIR + '/img_stats.pk', 'wb') as f:
-        pickle.dump([mean, std, bmin, bmax, true_min, true_max, 23, 23, 4, 0], f)
+        pickle.dump([mean, std, bmin, bmax, true_min, true_max, crop_top, crop_bottom, crop_left, crop_right], f)
     print('* Stats dumped!')

@@ -439,7 +439,7 @@ class GymTDQVAE(BaseGymTDVAE):
         self.d_steps = flags.d_steps
 
         if model is None:
-            model_args = [(3, 112, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
+            model_args = [(3, 80, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
                           flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, flags.t_diff_max_poss]
             model_kwargs = {'action_space': action_space}
             if rl:
