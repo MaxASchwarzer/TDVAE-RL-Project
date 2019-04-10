@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from pylego import misc
 from pylego.reader import Reader
 
 
@@ -42,7 +43,7 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         if not raw:
             with open(data_dir + '/' + env + '/img_stats.pk', 'rb') as f:
                 (self.img_mean, self.img_std, self.img_min, self.img_max, self.img_true_min, self.img_true_max,
-                self.img_hcrop_top, self.img_hcrop_bottom, self.img_vcrop_left, self.img_vcrop_right) = pickle.load(f)
+                 self.img_hcrop_top, self.img_hcrop_bottom, self.img_vcrop_left, self.img_vcrop_right) = pickle.load(f)
                 self.img_mean = torch.tensor(self.img_mean)
                 self.img_std = torch.tensor(self.img_std)
 
@@ -126,34 +127,67 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
         self.action_conditional_batch.close()
 
 
-class ReplayBuffer(Reader):  # TODO prioritized experience replay
+class ReplayBuffer(Reader):
+    '''Replay buffer implementing prioritized experience replay.'''
 
     def __init__(self, emulator, buffer_size, iters_per_epoch, skip_init=False):
-        self.buffer = deque(maxlen=buffer_size)
+        self.buffer = misc.SumTree(buffer_size)
+        self.beta = 0.4
+        self.beta_increment_per_sampling = 0.001
+        self.e = 0.01
+        self.a = 0.6
         if skip_init:
             print('* Skipping replay buffer initialization')
         else:
             print('* Initializing replay buffer')
-            while len(self.buffer) < buffer_size:
+            while self.buffer.count < buffer_size:
                 for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
-                    self.add(conditional_batch.get_next()[:3])
-                    if len(self.buffer) >= buffer_size:
+                    batch = conditional_batch.get_next()[:3]
+                    self.add(batch, np.abs(batch[2][:, 1:]).max(axis=1))
+                    if self.buffer.count >= buffer_size:
                         break
             print('* Replay buffer initialized')
         super().__init__({'train': iters_per_epoch})
 
-    def add(self, trajs):
-        obs, actions, rewards = trajs
-        self.buffer.extend(zip(obs, actions, rewards))
+    def calc_priority(self, error):
+        return (error + self.e) ** self.a
+
+    def add(self, trajs, errors):
+        for error, ob, action, reward in zip(errors, *trajs):
+            self.buffer.add(self.calc_priority(error), (ob, action, reward))
+
+    def update(self, indices, errors):
+        for idx, error in zip(indices, errors):
+            self.buffer.update(idx, self.calc_priority(error))
 
     def get_buffer(self):
-        return self.buffer
+        return (self.buffer, self.beta)
 
     def load_buffer(self, buffer):
         print('* Loading external replay buffer')
-        self.buffer = buffer
+        self.buffer, self.beta = buffer
+
+    def sample(self, n):
+        batch = []
+        idxs = []
+        segment = self.buffer.total() / n
+        priorities = []
+        self.beta = np.min([1., self.beta + self.beta_increment_per_sampling])
+        for i in range(n):
+            a = segment * i
+            b = segment * (i + 1)
+            s = np.random.uniform(a, b)
+            (idx, p, data) = self.buffer.get(s)
+            priorities.append(p)
+            batch.append(data)
+            idxs.append(idx)
+
+        sampling_probabilities = priorities / self.buffer.total()
+        is_weight = np.power(self.buffer.count * sampling_probabilities, -self.beta)
+        is_weight /= is_weight.max()
+        return batch, idxs, is_weight
 
     def iter_batches(self, split_name, batch_size, shuffle=True, partial_batching=False, threads=1, epochs=1,
                      max_batches=-1):
@@ -164,10 +198,9 @@ class ReplayBuffer(Reader):  # TODO prioritized experience replay
         if max_batches > 0:
             epoch_size = min(max_batches, epoch_size)
         for _ in range(epochs * epoch_size):
-            # specify p here to change uniform sampling:
-            indices = np.random.choice(len(self.buffer), size=batch_size, replace=False)
-            batch = list(zip(*(self.buffer[i] for i in indices)))
-            yield torch.stack(batch[0]), np.array(batch[1]), np.array(batch[2])
+            batch, idxs, is_weight = self.sample(batch_size)
+            batch = list(zip(*batch))
+            yield torch.stack(batch[0]), np.array(batch[1]), np.array(batch[2]), np.array(is_weight), idxs
 
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,

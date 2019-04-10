@@ -67,6 +67,24 @@ class BaseRLRunner(runner.Runner):
             actions = np.where(do_random, random_actions, selected_actions)
 
             self.emulator_state = next(self.emulator_iter).get_next(actions)[:3]
+
+
+
+            # TODO compute errors before adding to replay memory
+
+            self.model.set_train(False)
+            with torch.no_grad():
+                q = self.model.model.compute_q(obs, actions)
+            selected_actions = torch.argmax(q, dim=1).cpu().numpy()
+            random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
+            self.model.set_train(True)
+
+
+
+
+
+
+
             self.reader.add(self.emulator_state)  # add trajectory to replay buffer
 
             report = self.clean_report(self.run_batch(next(reader_iter), train=train))

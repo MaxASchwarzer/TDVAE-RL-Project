@@ -22,13 +22,16 @@ if __name__ == '__main__':
 
     print('REPLAY BUFFER READER:')
     for i, batch in enumerate(reader.iter_batches('train', 4, max_batches=5)):
-        obs, actions, rewards = batch
+        obs, actions, rewards, is_weight, idx = batch
         print('obs', obs.size())
         print('actions', actions.shape)
         print('rewards', rewards.shape)
+        print('is_weight', is_weight.shape)
         print()
         if i < 3:
             batch = obs.numpy().reshape(4 * 6, 3, 80, 80)
             save_comparison_grid('rseq%d.png' % i, batch, rows_cols=(4, 6), retain_sequence=True)
             print(actions)
+            print(is_weight)
+            print(idx)
             print()
