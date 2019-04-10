@@ -44,6 +44,11 @@ class BaseRLRunner(runner.Runner):
         reader_iter = self.reader.iter_batches(split, self.batch_size, shuffle=train, partial_batching=not train,
                                                threads=self.threads, max_batches=self.max_batches)
         for i in range(self.reader.get_size(split)):
+            # TODO log sum of rewards of episode, requires understanding when an episode ends:
+            # - track current reward for each batch element (each ongoing episode).
+            # - add to logger when any of them is done within the last outer_loop iterations.
+            # - if >1 episodes end at the same iteration, average their rewards for the logging.
+
             obs, actions, rewards = self.emulator_state
             obs = obs[:, self.simulation_start:]
             actions = actions[:, self.simulation_start:]
@@ -52,7 +57,7 @@ class BaseRLRunner(runner.Runner):
 
             self.model.set_train(False)
             with torch.no_grad():
-                q = self.model.model.compute_q(obs, actions)  # TODO log sum of rewards
+                q = self.model.model.compute_q(obs, actions)
             selected_actions = torch.argmax(q, dim=1).cpu().numpy()
             random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
             self.model.set_train(True)
