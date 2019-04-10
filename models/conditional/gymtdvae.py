@@ -432,6 +432,8 @@ class GymTDQVAE(BaseGymTDVAE):
             self.target_net = TDQVAE(*model_args, **model_kwargs)
             self.target_net.eval()
             self.target_net.to(self.device)
+        else:
+            self.target_net = None
 
         if flags.load_file:
             self.load(flags.load_file)
@@ -543,10 +545,11 @@ class GymTDQVAE(BaseGymTDVAE):
 
         if self.target_net is not None:
             target_net = self.target_net.state_dict()
+            replay_buffer = self.replay_buffer.get_buffer()
         else:
             target_net = None
-        save_objs = [self.model.state_dict(), target_net, self.optimizer.state_dict(), self.train_steps,
-                     self.replay_buffer.get_buffer()]
+            replay_buffer = None
+        save_objs = [self.model.state_dict(), target_net, self.optimizer.state_dict(), self.train_steps, replay_buffer]
         torch.save(save_objs, save_fname)
 
         if self.adversarial:
