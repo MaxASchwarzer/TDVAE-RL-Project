@@ -58,5 +58,5 @@ if __name__ == '__main__':
     # misc.save_comparison_grid('example2.png', batches[:16], border_shade=0.8)
 
     with open(DATA_DIR + '/img_stats.pk', 'wb') as f:
-        pickle.dump([mean, std, bmin, bmax], f)
+        pickle.dump([mean, std, bmin, bmax, 23, 23, 4, 0], f)
     print('* Stats dumped!')
