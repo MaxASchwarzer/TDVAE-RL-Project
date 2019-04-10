@@ -63,7 +63,6 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
                 obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
                 obs = (obs - self.img_min) / (self.img_max - self.img_min)
 
-                # TODO crop images instead of filling zeros, this is wasting compute
                 h, w = obs.size()[2:]
                 obs = obs[:, :, self.img_hcrop_top:h-self.img_hcrop_bottom, self.img_vcrop_left:w-self.img_vcrop_right]
                 h, w = obs.size()[2:]
