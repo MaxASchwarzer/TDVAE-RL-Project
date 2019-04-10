@@ -531,8 +531,9 @@ class GymTDQVAE(BaseGymTDVAE):
             target_q1 = r1_next + self.flags.discount_factor * q1_next
             target_q2 = r2_next + self.flags.discount_factor * q2_next
 
-            # TODO Huber loss
-            rl_loss = (self.flags.tdvae_weight * ((pred_q1 - target_q1) ** 2) + ((pred_q2 - target_q2) ** 2)).mean()
+            # TODO remove tdvae weighing when we have b->z path for q1
+            rl_loss = (self.flags.tdvae_weight * F.smooth_l1_loss(pred_q1, target_q1) +
+                       F.smooth_l1_loss(pred_q2, target_q2)).mean()
         else:
             rl_loss = 0.0
 
