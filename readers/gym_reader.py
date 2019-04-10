@@ -110,7 +110,6 @@ class ReplayBuffer(Reader):
         else:
             print('* Initializing replay buffer')
             while len(self.buffer) < buffer_size:
-                print(' - %d/%d' % (len(self.buffer), buffer_size))
                 for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
