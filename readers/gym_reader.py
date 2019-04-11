@@ -12,7 +12,7 @@ from pylego import misc
 from pylego.reader import Reader
 
 
-def make_env(env_name, frameskip=3, steps=1000000, secs=100000):
+def make_env(env_name, frameskip=4, steps=1000000, secs=100000):
     env = gym.make(env_name)
     env.env.frameskip = frameskip
     env._max_episode_steps = steps
@@ -22,7 +22,7 @@ def make_env(env_name, frameskip=3, steps=1000000, secs=100000):
 
 class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
-    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=3, raw=False,
+    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=4, raw=False,
                  data_dir='data'):
         self.env_name = env
         self.seq_len = seq_len
@@ -133,7 +133,7 @@ class ReplayBuffer(Reader):
                  skip_init=False):
         self.t_diff_min = t_diff_min
         self.t_diff_max = t_diff_max
-        self.clip_errors = clip_errors
+        self.clip_errors = clip_errors  # XXX default value ideal only for Seaquest
         self.buffer = misc.SumTree(buffer_size)
         self.beta = 0.4
         self.beta_increment_per_sampling = 0.001

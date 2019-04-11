@@ -510,6 +510,9 @@ class GymTDQVAE(BaseGymTDVAE):
             # Note: x[t], rewards[t] is a result of actions[t]
             # Q(s[t], a[t+1]) = r[t+1] + γ max_a Q(s[t+1], a)
             rewards, is_weight, done = labels
+            # XXX reward clipping hardcoded for Seaquest
+            rewards = (rewards / 10.0).clamp(0.0, 2.0)
+
             t1_next = t1 + 1
             t2_next = t2 + 1
 
@@ -524,7 +527,6 @@ class GymTDQVAE(BaseGymTDVAE):
             done1_next = torch.gather(done, 2, t1_next[..., None]).view(-1)  # size: bs
             done2_next = torch.gather(done, 2, t2_next[..., None]).view(-1)  # size: bs
 
-            # TODO clip rewards
             rewards = rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
             r1_next = torch.gather(rewards, 2, t1_next[..., None]).view(-1)  # size: bs
             r2_next = torch.gather(rewards, 2, t2_next[..., None]).view(-1)  # size: bs
@@ -552,8 +554,17 @@ class GymTDQVAE(BaseGymTDVAE):
             is_weight = 1.0
             rl_errors = 0.0
 
+        # multiply is_weight separately for ease of reporting
+        bce_optimal = is_weight * bce_optimal
+        bce_diff = is_weight * bce_diff
+        hidden_loss = is_weight * hidden_loss
+        g_loss = is_weight * g_loss
+        kl_div_qs_pb = is_weight * kl_div_qs_pb
+        kl_shift_qb_pt = is_weight * kl_shift_qb_pt
+        rl_loss = is_weight * rl_loss
+
         tdvae_loss = bce_diff + hidden_loss + self.d_weight * g_loss + self.beta * (kl_div_qs_pb + kl_shift_qb_pt)
-        loss = is_weight * (self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss)
+        loss = self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss
 
         if self.rl:
             rl_loss = rl_loss.mean()  # workaround to work with non-RL setting
