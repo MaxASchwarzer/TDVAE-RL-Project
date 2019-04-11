@@ -39,6 +39,8 @@ class BaseRLRunner(runner.Runner):
         self.simulation_start = flags.seq_len - history_length
         print('* Simulation history length:', history_length)
 
+        self.rewards = np.zeros([self.emulator_state[0].size(0)])
+
     def run_epoch(self, epoch, split, train=False, log=True):
         """Iterates the epoch data for a specific split."""
         print('\n* Starting epoch %d, split %s' % (epoch, split), '(train: ' + str(train) + ')')
@@ -49,11 +51,6 @@ class BaseRLRunner(runner.Runner):
         reader_iter = self.reader.iter_batches(split, self.batch_size, shuffle=train, partial_batching=not train,
                                                threads=self.threads, max_batches=self.max_batches)
         for i in range(self.reader.get_size(split)):
-            # TODO log sum of rewards of episode, requires understanding when an episode ends:
-            # - track current reward for each batch element (each ongoing episode).
-            # - add to logger when any of them is done within the last outer_loop iterations.
-            # - if >1 episodes end at the same iteration, average their rewards for the logging.
-
             obs, actions, rewards = self.emulator_state[:3]
             obs = obs[:, self.simulation_start:]
             actions = actions[:, self.simulation_start:]
@@ -73,6 +70,14 @@ class BaseRLRunner(runner.Runner):
 
             self.emulator_state = next(self.emulator_iter).get_next(actions)[:4]
             self.reader.add(self.emulator_state)  # add trajectory to replay buffer
+
+            rewards = self.emulator_state[2][:, -1]
+            self.rewards += rewards
+            dones = self.emulator_state[3][:, -1] > 1e-6
+            if np.any(dones):
+                rewards_per_ep = self.rewards[dones].mean()
+                self.rewards[dones] = 0.0
+                self.log_train_report({'rewards_per_ep': rewards_per_ep}, self.model.get_train_steps())
 
             report = self.clean_report(self.run_batch(next(reader_iter), train=train))
             if self.model.get_train_steps() % self.flags.freeze_every == 0:
