@@ -130,7 +130,8 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
 class ReplayBuffer(Reader):
     '''Replay buffer implementing prioritized experience replay.'''
 
-    def __init__(self, emulator, buffer_size, iters_per_epoch, skip_init=False):
+    def __init__(self, emulator, buffer_size, iters_per_epoch, clip_errors=2.0, skip_init=False):
+        self.clip_errors = clip_errors
         self.buffer = misc.SumTree(buffer_size)
         self.beta = 0.4
         self.beta_increment_per_sampling = 0.001
@@ -152,7 +153,7 @@ class ReplayBuffer(Reader):
         super().__init__({'train': iters_per_epoch})
 
     def calc_priority(self, error):
-        return (error + self.e) ** self.a
+        return np.minimum(self.clip_errors, error + self.e) ** self.a
 
     def add(self, trajs, errors):
         for error, ob, action, reward in zip(errors, *trajs):

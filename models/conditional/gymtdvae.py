@@ -471,21 +471,22 @@ class GymTDQVAE(BaseGymTDVAE):
         self.target_net.load_state_dict(self.model.state_dict())
 
     def loss_function(self, forward_ret, labels=None):
-        (x, actions, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu,
+        (x_orig, actions, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu,
          qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2) = forward_ret
 
         # replicate x multiple times
-        x_flat = x.flatten(2, -1)
-        x_flat = x_flat.expand(self.flags.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
-        x2 = torch.gather(x_flat, 2, t2[..., None, None].expand(-1, -1, -1, x_flat.size(3))).view(-1, x_flat.size(3))
+        x = x_orig.flatten(2, -1)
+        x = x[None, ...].expand(self.flags.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
+        x2 = torch.gather(x, 2, t2[..., None, None].expand(-1, -1, -1, x.size(3))).view(-1, x.size(3))
         batch_size = x2.size(0)
-        kl_div_qs_pb = ops.kl_div_gaussian(qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar).mean()
+        kl_div_qs_pb = ops.kl_div_gaussian(qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar)
 
         kl_shift_qb_pt = (ops.gaussian_log_prob(qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2) -
-                          ops.gaussian_log_prob(pt_z2_z1_mu, pt_z2_z1_logvar, qb_z2_b2)).mean()
+                          ops.gaussian_log_prob(pt_z2_z1_mu, pt_z2_z1_logvar, qb_z2_b2))
 
-        bce = F.binary_cross_entropy(pd_x2_z2, x2, reduction='sum') / batch_size
-        bce_optimal = F.binary_cross_entropy(x2, x2, reduction='sum') / batch_size
+        pd_x2_z2 = pd_x2_z2.flatten(1, -1)
+        bce = F.binary_cross_entropy(pd_x2_z2, x2, reduction='none').sum(dim=1)
+        bce_optimal = F.binary_cross_entropy(x2, x2, reduction='none').sum(dim=1)
         bce_diff = bce - bce_optimal
 
         if self.adversarial and self.is_training():
@@ -505,14 +506,14 @@ class GymTDQVAE(BaseGymTDVAE):
         if self.rl:
             # Note: x[t], rewards[t] is a result of actions[t]
             # Q(s[t], a[t+1]) = r[t+1] + γ max_a Q(s[t+1], a)
-            rewards = labels
+            rewards, is_weight = labels
             t1_next = t1 + 1
             t2_next = t2 + 1
 
             with torch.no_grad():
                   # size: bs, action_space
-                q1_next_target, q2_next_target = self.target_net.inference_and_q(x, actions, t1_next, t2_next)[:2]
-                q1_next_index, q2_next_index = self.model.inference_and_q(x, actions, t1_next, t2_next)[:2]
+                q1_next_target, q2_next_target = self.target_net.inference_and_q(x_orig, actions, t1_next, t2_next)[:2]
+                q1_next_index, q2_next_index = self.model.inference_and_q(x_orig, actions, t1_next, t2_next)[:2]
                 q1_next_index = torch.argmax(q1_next_index, dim=1, keepdim=True)
                 q2_next_index = torch.argmax(q2_next_index, dim=1, keepdim=True)
 
@@ -531,22 +532,27 @@ class GymTDQVAE(BaseGymTDVAE):
             target_q1 = r1_next + self.flags.discount_factor * q1_next
             target_q2 = r2_next + self.flags.discount_factor * q2_next
 
-            # TODO remove tdvae weighing when we have b->z path for q1
-            # TODO non-reduced losses for PER, averaged (/2). actually, L1 without smoothing for that
-            rl_loss = self.flags.tdvae_weight * F.smooth_l1_loss(pred_q1, target_q1, reduction='mean') + \
-                F.smooth_l1_loss(pred_q2, target_q2, reduction='mean')
+            rl_loss = 0.5 * (F.smooth_l1_loss(pred_q1, target_q1, reduction='none') +
+                             F.smooth_l1_loss(pred_q2, target_q2, reduction='none'))
+            # errors for prioritized experience replay
+            rl_errors = 0.5 * (torch.abs(pred_q1 - target_q1) + torch.abs(pred_q2 - target_q2)).detach()
         else:
             rl_loss = 0.0
+            is_weight = 1.0
+            rl_errors = 0.0
 
         tdvae_loss = bce_diff + hidden_loss + self.d_weight * g_loss + self.beta * (kl_div_qs_pb + kl_shift_qb_pt)
-        loss = self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss
+        loss = is_weight * (self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss)
 
-        return collections.OrderedDict([('loss', loss),
-                                        ('bce_diff', bce_diff),
-                                        ('kl_div_qs_pb', kl_div_qs_pb),
-                                        ('kl_shift_qb_pt', kl_shift_qb_pt),
+        if self.rl:
+            rl_loss = rl_loss.mean()  # workaround to work with non-RL setting
+        return collections.OrderedDict([('loss', loss.mean()),
+                                        ('bce_diff', bce_diff.mean()),
+                                        ('kl_div_qs_pb', kl_div_qs_pb.mean()),
+                                        ('kl_shift_qb_pt', kl_shift_qb_pt.mean()),
                                         ('rl_loss', rl_loss),
-                                        ('bce_optimal', bce_optimal)])
+                                        ('bce_optimal', bce_optimal.mean()),
+                                        ('rl_errors', rl_errors)])
 
     def initialize(self, load_file):
         '''Overriding: do not load file during superclass initialization, we do it manually later in init'''
