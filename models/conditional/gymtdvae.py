@@ -142,7 +142,7 @@ class AdvantageNetwork(nn.Module):
     def forward(self, z):
         t = torch.tanh(self.fc1(z))
         t = torch.tanh(self.fc2(t))
-        p = torch.sigmoid(self.fc3(t))
+        p = self.fc3(t)
         return p
 
 
@@ -157,7 +157,7 @@ class ValueNetwork(nn.Module):
     def forward(self, z):
         t = torch.tanh(self.fc1(z))
         t = torch.tanh(self.fc2(t))
-        p = torch.sigmoid(self.fc3(t))
+        p = self.fc3(t)
         return p
 
 
@@ -524,6 +524,7 @@ class GymTDQVAE(BaseGymTDVAE):
             done1_next = torch.gather(done, 2, t1_next[..., None]).view(-1)  # size: bs
             done2_next = torch.gather(done, 2, t2_next[..., None]).view(-1)  # size: bs
 
+            # TODO clip rewards
             rewards = rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
             r1_next = torch.gather(rewards, 2, t1_next[..., None]).view(-1)  # size: bs
             r2_next = torch.gather(rewards, 2, t2_next[..., None]).view(-1)  # size: bs
