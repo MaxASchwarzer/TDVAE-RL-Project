@@ -332,14 +332,17 @@ class TDQVAE(nn.Module):
         return (q1, q2, t_encodings, b1, a1, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, qs_z1_z2_b1s, qs_z1_z2_b1, qb_z2_b2_mu,
                 qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2)
 
-    def forward(self, x, actions):
-        if self.rl:
-            rl_pad = 1
+    def forward(self, x, actions, t1, t2):
+        if t1 is None:
+            t1 = torch.randint(0, x.size(1) - int(self.rl) - self.t_diff_max, (self.samples_per_seq, x.size(0)),
+                               device=x.device)
         else:
-            rl_pad = 0
-        t1 = torch.randint(0, x.size(1) - rl_pad - self.t_diff_max, (self.samples_per_seq, x.size(0)), device=x.device)
-        t2 = t1 + torch.randint(self.t_diff_min, self.t_diff_max + 1, (self.samples_per_seq, x.size(0)),
-                                device=x.device)
+            t1 = t1[None, :]
+        if t2 is None:
+            t2 = t1 + torch.randint(self.t_diff_min, self.t_diff_max + 1, (self.samples_per_seq, x.size(0)),
+                                    device=x.device)
+        else:
+            t2 = t2[None, :]
 
         (q1, q2, t_encodings, b1, a1, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, qs_z1_z2_b1s, qs_z1_z2_b1, qb_z2_b2_mu,
          qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2) = self.inference_and_q(x, actions, t1, t2)

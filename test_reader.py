@@ -5,7 +5,7 @@ from readers.gym_reader import GymReader, ReplayBuffer
 
 if __name__ == '__main__':
     emulator = GymReader('Seaquest-v0', 6, 4, 2, 100)
-    reader = ReplayBuffer(emulator, 5000, 100)
+    reader = ReplayBuffer(emulator, 5000, 100, 1, 4)
 
     print('EMULATOR:')
     for i, batch in enumerate(emulator.iter_batches('train', 4, max_batches=5, threads=2)):

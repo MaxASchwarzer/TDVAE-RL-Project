@@ -12,6 +12,8 @@ class BaseRLRunner(runner.Runner):
 
     def __init__(self, flags, model_class, log_keys, *args, **kwargs):
         self.flags = flags
+        if flags.samples_per_seq != 1:
+            raise ValueError('! ERROR: samples_per_seq != 1 is not supported for RL')
 
         emulator = GymReader(flags.env, flags.seq_len, flags.batch_size, flags.threads, np.inf)
         self.emulator_iter = emulator.iter_batches('train', flags.batch_size, threads=flags.threads)
@@ -19,7 +21,8 @@ class BaseRLRunner(runner.Runner):
         self.action_space = emulator.action_space()
         self.eps_decay = misc.LinearDecay(flags.eps_decay_start, flags.eps_decay_end, 1.0, flags.eps_final)
 
-        reader = ReplayBuffer(emulator, flags.replay_size, flags.iters_per_epoch, skip_init=bool(flags.load_file))
+        reader = ReplayBuffer(emulator, flags.replay_size, flags.iters_per_epoch, flags.t_diff_min, flags.t_diff_max,
+                              skip_init=bool(flags.load_file))
 
         summary_dir = flags.log_dir + '/summary'
         super().__init__(reader, flags.batch_size, flags.epochs, summary_dir, log_keys=log_keys,
@@ -32,8 +35,9 @@ class BaseRLRunner(runner.Runner):
                                  debug=flags.debug)
 
         # consider history length for simulation to be the expected t seen during TDQVAE training
-        self.simulation_start = flags.seq_len - int(np.ceil(0.5 * (flags.seq_len + flags.t_diff_min))) + 1
-        self.inf_errors = np.ones(flags.batch_size) * np.inf
+        history_length = int(np.ceil(0.5 * (flags.seq_len + flags.t_diff_min))) - 1
+        self.simulation_start = flags.seq_len - history_length
+        print('* Simulation history length:', history_length)
 
     def run_epoch(self, epoch, split, train=False, log=True):
         """Iterates the epoch data for a specific split."""
@@ -68,7 +72,7 @@ class BaseRLRunner(runner.Runner):
             actions = np.where(do_random, random_actions, selected_actions)
 
             self.emulator_state = next(self.emulator_iter).get_next(actions)[:4]
-            self.reader.add(self.emulator_state, self.inf_errors)  # add trajectory to replay buffer
+            self.reader.add(self.emulator_state)  # add trajectory to replay buffer
 
             report = self.clean_report(self.run_batch(next(reader_iter), train=train))
             if self.model.get_train_steps() % self.flags.freeze_every == 0:

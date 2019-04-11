@@ -129,15 +129,17 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
 
 class ReplayBuffer(Reader):
     '''Replay buffer implementing prioritized experience replay.'''
-    # TODO how to do exp replay properly where error on a state depends on t1 and t2 chosen during training?
 
-    def __init__(self, emulator, buffer_size, iters_per_epoch, clip_errors=1.5, skip_init=False):
+    def __init__(self, emulator, buffer_size, iters_per_epoch, t_diff_min, t_diff_max, clip_errors=2.0,
+                 skip_init=False):
+        self.t_diff_min = t_diff_min
+        self.t_diff_max = t_diff_max
         self.clip_errors = clip_errors
         self.buffer = misc.SumTree(buffer_size)
         self.beta = 0.4
         self.beta_increment_per_sampling = 0.001
-        self.e = 0.1
-        self.a = 0.1
+        self.e = 0.01
+        self.a = 0.6
         if skip_init:
             print('* Skipping replay buffer initialization')
         else:
@@ -146,8 +148,7 @@ class ReplayBuffer(Reader):
                 for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
-                    batch = conditional_batch.get_next()[:4]
-                    self.add(batch, np.ones(batch[0].size(0)) * np.inf)
+                    self.add(conditional_batch.get_next()[:4])
                     if self.buffer.count >= buffer_size:
                         break
             print('* Replay buffer initialized')
@@ -156,10 +157,16 @@ class ReplayBuffer(Reader):
     def calc_priority(self, error):
         return np.minimum(self.clip_errors, error + self.e) ** self.a
 
-    def add(self, trajs, errors):
-        priorities = self.calc_priority(errors)
-        for priority, ob, action, reward, done in zip(priorities, *trajs):
-            self.buffer.add(priority, (ob, action, reward, done))
+    def add(self, trajs, t_diff_min=None, t_diff_max=None):
+        t_diff_min = t_diff_min or self.t_diff_min
+        t_diff_max = t_diff_max or self.t_diff_max
+
+        priority = self.calc_priority(np.inf)
+        for ob, action, reward, done in zip(*trajs):
+            # generate random (t1, t2) combination
+            t1 = np.random.randint(0, ob.size(0) - t_diff_max - 1)  # -1 to leave room for next reward
+            t2 = t1 + np.random.randint(t_diff_min, t_diff_max + 1)
+            self.buffer.add(priority, (ob, action, reward, done, t1, t2))
 
     def update(self, indices, errors):
         priorities = self.calc_priority(errors)
@@ -203,8 +210,9 @@ class ReplayBuffer(Reader):
             epoch_size = min(max_batches, epoch_size)
         for _ in range(epochs * epoch_size):
             batch, idxs, is_weight = self.sample(batch_size)
-            obs, actions, rewards, done = list(zip(*batch))
-            yield torch.stack(obs), np.array(actions), np.array(rewards), np.array(done), np.array(is_weight), idxs
+            obs, actions, rewards, done, t1, t2 = list(zip(*batch))
+            yield (torch.stack(obs), np.array(actions), np.array(rewards), np.array(done), np.array(t1), np.array(t2),
+                   np.array(is_weight), idxs)
 
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,

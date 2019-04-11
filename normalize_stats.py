@@ -15,7 +15,7 @@ DATA_DIR = 'data/' + GAME
 def get_batches(batches_fname):
     if not Path(batches_fname).is_file():
         emulator = GymReader(GAME, 2, 16, 6, np.inf, raw=True)
-        reader = ReplayBuffer(emulator, 5000, 512)
+        reader = ReplayBuffer(emulator, 5000, 512, 1, 1)
 
         batches = []
         print('* Collecting batches')
