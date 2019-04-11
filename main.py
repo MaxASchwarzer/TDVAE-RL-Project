@@ -43,6 +43,8 @@ if __name__ == '__main__':
     arg(parser, 'eps_decay_start', type=int, default=2500, help='Iteration to start decaying epsilon at')
     arg(parser, 'eps_decay_end', type=int, default=100000, help='Iteration to stop decaying epsilon at')
     arg(parser, 'eps_final', type=float, default=0.01, help='Final epsilon for epsilon-greedy')
+    arg(parser, 'add_replay_every', type=int, default=8, help='Take an action and add to replay buffer every these ' \
+                                                              'many steps')
     arg(parser, 'h_size', type=int, default=32, help='Base #channels for resnets before downscaling.')
     arg(parser, 'd_size', type=int, default=16, help='Base #channels for discriminator before downscaling.')
     arg(parser, 'b_size', type=int, default=128, help='belief size')
@@ -50,9 +52,8 @@ if __name__ == '__main__':
     arg(parser, 'layers', type=int, default=2, help='number of layers')
     arg(parser, 't_diff_min', type=int, default=1, help='minimum time difference t2-t1')
     arg(parser, 't_diff_max', type=int, default=4, help='maximum time difference t2-t1')
-    arg(parser, 't_diff_max_poss', type=int, default=10, help="""Maximum time difference across
-                                                                entire curriculum, not just current run.
-                                                                Needed to set weight dims correctly.""")
+    arg(parser, 't_diff_max_poss', type=int, default=10, help='Maximum time difference across entire curriculum, not ' \
+                                                              'just current run. Needed to set weight dims correctly.')
     arg(parser, 'epochs', type=int, default=50000, help='no. of training epochs')
     arg(parser, 'max_batches', type=int, default=-1, help='max batches per split (if not -1, for debugging)')
     arg(parser, 'print_every', type=int, default=10, help='print losses every these many steps')

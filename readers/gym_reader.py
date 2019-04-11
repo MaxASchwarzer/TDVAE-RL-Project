@@ -147,7 +147,7 @@ class ReplayBuffer(Reader):
                 for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
-                    self.add(conditional_batch.get_next()[:4], subsample=1.0)
+                    self.add(conditional_batch.get_next()[:4])
                     if self.buffer.count >= buffer_size:
                         break
             print('* Replay buffer initialized')
@@ -156,12 +156,9 @@ class ReplayBuffer(Reader):
     def calc_priority(self, error):
         return np.minimum(self.clip_errors, error + self.e) ** self.a
 
-    def add(self, trajs, subsample=0.125, t_diff_min=None, t_diff_max=None):
+    def add(self, trajs, t_diff_min=None, t_diff_max=None):
         t_diff_min = t_diff_min or self.t_diff_min
         t_diff_max = t_diff_max or self.t_diff_max
-
-        if subsample < 1.0:  # TODO subsample only n_samples samples to add
-            n_samples = int(np.ceil(subsample * trajs[0].size(0)))
 
         priority = self.calc_priority(np.inf)
         for ob, action, reward, done in zip(*trajs):

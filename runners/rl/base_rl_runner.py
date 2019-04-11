@@ -52,33 +52,34 @@ class BaseRLRunner(runner.Runner):
         reader_iter = self.reader.iter_batches(split, self.batch_size, shuffle=train, partial_batching=not train,
                                                threads=self.threads, max_batches=self.max_batches)
         for i in range(self.reader.get_size(split)):
-            obs, actions, rewards = self.emulator_state[:3]
-            obs = obs[:, self.simulation_start:]
-            actions = actions[:, self.simulation_start:]
-            rewards = rewards[:, self.simulation_start:]
-            obs, actions, rewards = self.model.prepare_batch([obs, actions, rewards])
+            if self.model.get_train_steps() % self.flags.add_replay_every == 0:
+                obs, actions, rewards = self.emulator_state[:3]
+                obs = obs[:, self.simulation_start:]
+                actions = actions[:, self.simulation_start:]
+                rewards = rewards[:, self.simulation_start:]
+                obs, actions, rewards = self.model.prepare_batch([obs, actions, rewards])
 
-            self.model.set_train(False)
-            with torch.no_grad():
-                q = self.model.model.compute_q(obs, actions)
-            self.model.set_train(True)
+                self.model.set_train(False)
+                with torch.no_grad():
+                    q = self.model.model.compute_q(obs, actions)
+                self.model.set_train(True)
 
-            selected_actions = torch.argmax(q, dim=1).cpu().numpy()
-            random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
-            eps = self.eps_decay.get_y(self.model.get_train_steps())
-            do_random = np.random.choice(2, size=selected_actions.shape, p=[1. - eps, eps])
-            actions = np.where(do_random, random_actions, selected_actions)
+                selected_actions = torch.argmax(q, dim=1).cpu().numpy()
+                random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
+                eps = self.eps_decay.get_y(self.model.get_train_steps())
+                do_random = np.random.choice(2, size=selected_actions.shape, p=[1. - eps, eps])
+                actions = np.where(do_random, random_actions, selected_actions)
 
-            self.emulator_state = next(self.emulator_iter).get_next(actions)[:4]
-            self.reader.add(self.emulator_state)  # add trajectory to replay buffer
+                self.emulator_state = next(self.emulator_iter).get_next(actions)[:4]
+                self.reader.add(self.emulator_state)  # add trajectory to replay buffer
 
-            rewards = self.emulator_state[2][:, -1]
-            self.rewards += rewards
-            dones = self.emulator_state[3][:, -1] > 1e-6
-            if np.any(dones):
-                rewards_per_ep = self.rewards[dones].mean()
-                self.rewards[dones] = 0.0
-                self.log_train_report({'rewards_per_ep': rewards_per_ep}, self.model.get_train_steps())
+                rewards = self.emulator_state[2][:, -1]
+                self.rewards += rewards
+                dones = self.emulator_state[3][:, -1] > 1e-6
+                if np.any(dones):
+                    rewards_per_ep = self.rewards[dones].mean()
+                    self.rewards[dones] = 0.0
+                    self.log_train_report({'rewards_per_ep': rewards_per_ep}, self.model.get_train_steps())
 
             report = self.clean_report(self.run_batch(next(reader_iter), train=train))
             if self.model.get_train_steps() % self.flags.freeze_every == 0:
