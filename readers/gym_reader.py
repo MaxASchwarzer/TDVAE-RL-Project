@@ -129,14 +129,15 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
 
 class ReplayBuffer(Reader):
     '''Replay buffer implementing prioritized experience replay.'''
+    # TODO how to do exp replay properly where error on a state depends on t1 and t2 chosen during training?
 
-    def __init__(self, emulator, buffer_size, iters_per_epoch, clip_errors=2.0, skip_init=False):
+    def __init__(self, emulator, buffer_size, iters_per_epoch, clip_errors=1.5, skip_init=False):
         self.clip_errors = clip_errors
         self.buffer = misc.SumTree(buffer_size)
         self.beta = 0.4
         self.beta_increment_per_sampling = 0.001
-        self.e = 0.01
-        self.a = 0.6
+        self.e = 0.1
+        self.a = 0.1
         if skip_init:
             print('* Skipping replay buffer initialization')
         else:
@@ -146,7 +147,7 @@ class ReplayBuffer(Reader):
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
                     batch = conditional_batch.get_next()[:4]
-                    self.add(batch, np.abs(batch[2][:, 1:]).max(axis=1))  # TODO inf?
+                    self.add(batch, np.ones(batch[0].size(0)) * np.inf)
                     if self.buffer.count >= buffer_size:
                         break
             print('* Replay buffer initialized')
