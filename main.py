@@ -15,7 +15,7 @@ if __name__ == '__main__':
     arg(parser, 'cuda', type=bool, default=True, help='enable CUDA')
     arg(parser, 'load_file', type=str, default='', help='file to load model from')
     arg(parser, 'save_file', type=str, default='model.dat', help='model save file')
-    arg(parser, 'save_every', type=int, default=500, help='save every these many global steps (-1 to disable saving)')
+    arg(parser, 'save_every', type=int, default=2500, help='save every these many global steps (-1 to disable saving)')
     arg(parser, 'data_path', type=str, default='data/MNIST')
     arg(parser, 'data', type=str, default='gym', help="Data source to use.  Set to gym and set env flag for gym.")
     arg(parser, 'env', type=str, default='Seaquest-v0', help="Gym environment to use (if data=gym)")
