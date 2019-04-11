@@ -8,9 +8,9 @@ class GymRLRunner(BaseRLRunner):
         super().__init__(flags, BaseGymTDVAE, ['loss', 'rl_loss', 'bce_diff', 'kl_div_qs_pb', 'kl_shift_qb_pt'])
 
     def run_batch(self, batch, train=False):
-        images, actions, rewards, is_weight = self.model.prepare_batch(batch[:4])
+        images, actions, rewards, done, is_weight = self.model.prepare_batch(batch[:5])
         replay_indices = batch[-1]
-        report = self.model.run_loss([images, actions], labels=(rewards, is_weight))
+        report = self.model.run_loss([images, actions], labels=(rewards, is_weight, done))
         rl_errors = report.pop('rl_errors', None).cpu().numpy()
         self.reader.update(replay_indices, rl_errors)
         if train:

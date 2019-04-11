@@ -15,7 +15,7 @@ class BaseRLRunner(runner.Runner):
 
         emulator = GymReader(flags.env, flags.seq_len, flags.batch_size, flags.threads, np.inf)
         self.emulator_iter = emulator.iter_batches('train', flags.batch_size, threads=flags.threads)
-        self.emulator_state = next(self.emulator_iter).get_next()[:3]
+        self.emulator_state = next(self.emulator_iter).get_next()[:4]
         self.action_space = emulator.action_space()
         self.eps_decay = misc.LinearDecay(flags.eps_decay_start, flags.eps_decay_end, 1.0, flags.eps_final)
 
@@ -33,6 +33,7 @@ class BaseRLRunner(runner.Runner):
 
         # consider history length for simulation to be the expected t seen during TDQVAE training
         self.simulation_start = flags.seq_len - int(np.ceil(0.5 * (flags.seq_len + flags.t_diff_min))) + 1
+        self.inf_errors = np.ones(flags.batch_size) * np.inf
 
     def run_epoch(self, epoch, split, train=False, log=True):
         """Iterates the epoch data for a specific split."""
@@ -49,7 +50,7 @@ class BaseRLRunner(runner.Runner):
             # - add to logger when any of them is done within the last outer_loop iterations.
             # - if >1 episodes end at the same iteration, average their rewards for the logging.
 
-            obs, actions, rewards = self.emulator_state
+            obs, actions, rewards, done = self.emulator_state
             obs = obs[:, self.simulation_start:]
             actions = actions[:, self.simulation_start:]
             rewards = rewards[:, self.simulation_start:]
@@ -58,34 +59,16 @@ class BaseRLRunner(runner.Runner):
             self.model.set_train(False)
             with torch.no_grad():
                 q = self.model.model.compute_q(obs, actions)
-            selected_actions = torch.argmax(q, dim=1).cpu().numpy()
-            random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
             self.model.set_train(True)
 
+            selected_actions = torch.argmax(q, dim=1).cpu().numpy()
+            random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
             eps = self.eps_decay.get_y(self.model.get_train_steps())
             do_random = np.random.choice(2, size=selected_actions.shape, p=[1. - eps, eps])
             actions = np.where(do_random, random_actions, selected_actions)
 
-            self.emulator_state = next(self.emulator_iter).get_next(actions)[:3]
-
-
-
-            # TODO compute errors before adding to replay memory
-
-            self.model.set_train(False)
-            with torch.no_grad():
-                q = self.model.model.compute_q(obs, actions)
-            selected_actions = torch.argmax(q, dim=1).cpu().numpy()
-            random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
-            self.model.set_train(True)
-
-
-
-
-
-
-
-            self.reader.add(self.emulator_state)  # add trajectory to replay buffer
+            self.emulator_state = next(self.emulator_iter).get_next(actions)[:4]
+            self.reader.add(self.emulator_state, self.inf_errors)  # add trajectory to replay buffer
 
             report = self.clean_report(self.run_batch(next(reader_iter), train=train))
             if self.model.get_train_steps() % self.flags.freeze_every == 0:

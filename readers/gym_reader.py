@@ -145,8 +145,8 @@ class ReplayBuffer(Reader):
                 for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
-                    batch = conditional_batch.get_next()[:3]
-                    self.add(batch, np.abs(batch[2][:, 1:]).max(axis=1))
+                    batch = conditional_batch.get_next()[:4]
+                    self.add(batch, np.abs(batch[2][:, 1:]).max(axis=1))  # TODO inf?
                     if self.buffer.count >= buffer_size:
                         break
             print('* Replay buffer initialized')
@@ -157,8 +157,8 @@ class ReplayBuffer(Reader):
 
     def add(self, trajs, errors):
         priorities = self.calc_priority(errors)
-        for priority, ob, action, reward in zip(priorities, *trajs):
-            self.buffer.add(priority, (ob, action, reward))
+        for priority, ob, action, reward, done in zip(priorities, *trajs):
+            self.buffer.add(priority, (ob, action, reward, done))
 
     def update(self, indices, errors):
         priorities = self.calc_priority(errors)
@@ -202,8 +202,8 @@ class ReplayBuffer(Reader):
             epoch_size = min(max_batches, epoch_size)
         for _ in range(epochs * epoch_size):
             batch, idxs, is_weight = self.sample(batch_size)
-            batch = list(zip(*batch))
-            yield torch.stack(batch[0]), np.array(batch[1]), np.array(batch[2]), np.array(is_weight), idxs
+            obs, actions, rewards, done = list(zip(*batch))
+            yield torch.stack(obs), np.array(actions), np.array(rewards), np.array(done), np.array(is_weight), idxs
 
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,
@@ -245,8 +245,8 @@ def worker(remote, parent_remote, env_fn_wrappers):
                 rewards.append(reward)
                 dones.append(done)
                 infos.append(info)
-            remote.send((np.array(obs, dtype=np.float32), np.array(rewards, dtype=np.float32), np.array(dones),
-                         np.array(infos)))
+            remote.send((np.array(obs, dtype=np.float32), np.array(rewards, dtype=np.float32),
+                         np.array(dones, dtype=np.float32), np.array(infos)))
         elif cmd == 'reset':
             ob = [env.reset() for env in envs]
             ob = np.stack(ob, 0)
