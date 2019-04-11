@@ -50,7 +50,7 @@ class BaseRLRunner(runner.Runner):
             # - add to logger when any of them is done within the last outer_loop iterations.
             # - if >1 episodes end at the same iteration, average their rewards for the logging.
 
-            obs, actions, rewards, done = self.emulator_state
+            obs, actions, rewards = self.emulator_state[:3]
             obs = obs[:, self.simulation_start:]
             actions = actions[:, self.simulation_start:]
             rewards = rewards[:, self.simulation_start:]
