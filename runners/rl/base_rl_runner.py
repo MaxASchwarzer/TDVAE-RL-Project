@@ -25,6 +25,7 @@ class BaseRLRunner(runner.Runner):
                               flags.t_diff_max, skip_init=bool(flags.load_file))
 
         summary_dir = flags.log_dir + '/summary'
+        log_keys.append('rewards_per_ep')
         super().__init__(reader, flags.batch_size, flags.epochs, summary_dir, log_keys=log_keys,
                          threads=flags.threads, print_every=flags.print_every, visualize_every=flags.visualize_every,
                          max_batches=flags.max_batches, *args, **kwargs)
