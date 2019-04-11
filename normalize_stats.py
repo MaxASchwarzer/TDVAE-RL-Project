@@ -19,7 +19,7 @@ def get_batches(batches_fname):
 
         batches = []
         print('* Collecting batches')
-        for i, batch in enumerate(reader.iter_batches('train', 16, max_batches=256)):
+        for batch in reader.iter_batches('train', 16, max_batches=256):
             batch = batch[0].numpy()
             batch = batch.reshape(-1, *batch.shape[2:])
             batches.append(batch)
