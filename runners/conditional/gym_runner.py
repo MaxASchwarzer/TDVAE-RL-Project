@@ -10,7 +10,6 @@ class GymRunner(BaseRunner):
 
     def __init__(self, flags, *args, **kwargs):
         super().__init__(flags, BaseGymTDVAE, ['loss', 'bce_diff', 'kl_div_qs_pb', 'kl_shift_qb_pt'])
-        self.maxlen = flags.seq_len
 
     def run_batch(self, batch, train=False):
         data = batch.get_next()
@@ -39,8 +38,8 @@ class GymRunner(BaseRunner):
 
     def post_epoch_visualize(self, epoch, split):
         print('* Visualizing', split)
-        length = min(10, self.maxlen - 1)
-        n = min(5, self.maxlen - length)
+        length = min(10, self.flags.seq_len - 1)
+        n = min(5, self.flags.seq_len - length)
         vis_data, aspect = self._visualize_split(split, length, n)  # FIXME n is 1
         fname = self.flags.log_dir + '/{}'.format(split) + '%03d.png' % epoch
         misc.save_comparison_grid(fname, vis_data, rows_cols=aspect, border_shade=1.0, retain_sequence=True)
