@@ -377,6 +377,7 @@ class TDQVAE(nn.Module):
 
         # p_D(x2 | z2)
         pd_x2_z2 = self.x_z(qb_z2_b2)
+        # TODO maximize the likelihood of rewards as well
 
         return (x, actions, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu,
                 qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2)
@@ -520,8 +521,8 @@ class GymTDQVAE(BaseGymTDVAE):
                 q2_next_index = torch.argmax(q2_next_index, dim=1, keepdim=True)
 
             done = done[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
-            done1 = torch.gather(done, 2, t1[..., None]).view(-1)  # size: bs
-            done2 = torch.gather(done, 2, t2[..., None]).view(-1)  # size: bs
+            done1_next = torch.gather(done, 2, t1_next[..., None]).view(-1)  # size: bs
+            done2_next = torch.gather(done, 2, t2_next[..., None]).view(-1)  # size: bs
 
             rewards = rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
             r1_next = torch.gather(rewards, 2, t1_next[..., None]).view(-1)  # size: bs
@@ -536,8 +537,8 @@ class GymTDQVAE(BaseGymTDVAE):
 
             q1_next = torch.gather(q1_next_target, 1, q1_next_index).view(-1)
             q2_next = torch.gather(q2_next_target, 1, q2_next_index).view(-1)
-            target_q1 = r1_next + self.flags.discount_factor * (1.0 - done1) * q1_next
-            target_q2 = r2_next + self.flags.discount_factor * (1.0 - done2) * q2_next
+            target_q1 = r1_next + self.flags.discount_factor * (1.0 - done1_next) * q1_next
+            target_q2 = r2_next + self.flags.discount_factor * (1.0 - done2_next) * q2_next
 
             # TODO remove tdvae weighing here after changing q1 path
             rl_loss = (self.flags.tdvae_weight * F.smooth_l1_loss(pred_q1, target_q1, reduction='none') +

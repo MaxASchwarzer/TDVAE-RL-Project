@@ -38,7 +38,7 @@ if __name__ == '__main__':
     arg(parser, 'batch_size', type=int, default=64, help='batch size')
     arg(parser, 'replay_size', type=int, default=10000, help='Experience replay buffer size')
     arg(parser, 'freeze_every', type=int, default=5000, help='Freeze a Q network every this many steps')
-    arg(parser, 'samples_per_seq', type=int, default=1, help='(t1, t2) samples per input sequence')
+    arg(parser, 'samples_per_seq', type=int, default=1, help='(t1, t2) samples per input sequence')  # TODO remove
     arg(parser, 'discount_factor', type=float, default=0.99, help='RL discount factor (aka gamma)')
     arg(parser, 'eps_decay_start', type=int, default=2500, help='Iteration to start decaying epsilon at')
     arg(parser, 'eps_decay_end', type=int, default=100000, help='Iteration to stop decaying epsilon at')
