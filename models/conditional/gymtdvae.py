@@ -478,7 +478,6 @@ class GymTDQVAE(BaseGymTDVAE):
         x = x_orig.flatten(2, -1)
         x = x[None, ...].expand(self.flags.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
         x2 = torch.gather(x, 2, t2[..., None, None].expand(-1, -1, -1, x.size(3))).view(-1, x.size(3))
-        batch_size = x2.size(0)
         kl_div_qs_pb = ops.kl_div_gaussian(qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar)
 
         kl_shift_qb_pt = (ops.gaussian_log_prob(qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2) -
@@ -532,10 +531,12 @@ class GymTDQVAE(BaseGymTDVAE):
             target_q1 = r1_next + self.flags.discount_factor * q1_next
             target_q2 = r2_next + self.flags.discount_factor * q2_next
 
-            rl_loss = 0.5 * (F.smooth_l1_loss(pred_q1, target_q1, reduction='none') +
-                             F.smooth_l1_loss(pred_q2, target_q2, reduction='none'))
+            # TODO remove tdvae weighing here after changing q1 path
+            rl_loss = (self.flags.tdvae_weight * F.smooth_l1_loss(pred_q1, target_q1, reduction='none') +
+                       F.smooth_l1_loss(pred_q2, target_q2, reduction='none')) / (1.0 + self.flags.tdvae_weight)
             # errors for prioritized experience replay
-            rl_errors = 0.5 * (torch.abs(pred_q1 - target_q1) + torch.abs(pred_q2 - target_q2)).detach()
+            rl_errors = ((self.flags.tdvae_weight * torch.abs(pred_q1 - target_q1) +
+                          torch.abs(pred_q2 - target_q2)) / (1.0 + self.flags.tdvae_weight)).detach()
         else:
             rl_loss = 0.0
             is_weight = 1.0
