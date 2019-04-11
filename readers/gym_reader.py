@@ -47,42 +47,41 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
                 self.img_mean = torch.tensor(self.img_mean)
                 self.img_std = torch.tensor(self.img_std)
 
-    def get_next(self, actions=None, fill_buffer=True, outer_frameskip=2):
+    def get_next(self, actions=None, fill_buffer=True):
         if actions is None:
             # We have to assume a random policy if nobody gives us actions
             in_actions = np.random.randint(0, self.action_space, size=self.batch_size)
         else:
             in_actions = actions
 
-        for _ in range(outer_frameskip):
-            self.env.step_async(in_actions)
-            orig_obs, rewards, done, meta = self.env.step_wait()
-            orig_obs = np.transpose(orig_obs, axes=(0, 3, 1, 2))  # original unnormalized images
-            obs = torch.tensor(orig_obs).float() / 255
+        self.env.step_async(in_actions)
+        orig_obs, rewards, done, meta = self.env.step_wait()
+        orig_obs = np.transpose(orig_obs, axes=(0, 3, 1, 2))  # original unnormalized images
+        obs = torch.tensor(orig_obs).float() / 255
 
-            if not self.raw:
-                obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
-                obs = (obs - self.img_min) / (self.img_max - self.img_min)
+        if not self.raw:
+            obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
+            obs = (obs - self.img_min) / (self.img_max - self.img_min)
 
-                h, w = obs.size()[2:]
-                obs = obs[:, :, self.img_hcrop_top:h-self.img_hcrop_bottom, self.img_vcrop_left:w-self.img_vcrop_right]
-                h, w = obs.size()[2:]
-                pad_h, pad_w = 160 - h, 160 - w
-                if self.downsample:
-                    obs = F.avg_pool2d(obs, (2, 2,), stride=2)
-                    pad_h = np.ceil(pad_h / 2.0)
-                    pad_w = np.ceil(pad_w / 2.0)
-                pad_h /= 2.0
-                pad_w /= 2.0
+            h, w = obs.size()[2:]
+            obs = obs[:, :, self.img_hcrop_top:h-self.img_hcrop_bottom, self.img_vcrop_left:w-self.img_vcrop_right]
+            h, w = obs.size()[2:]
+            pad_h, pad_w = 160 - h, 160 - w
+            if self.downsample:
+                obs = F.avg_pool2d(obs, (2, 2,), stride=2)
+                pad_h = np.ceil(pad_h / 2.0)
+                pad_w = np.ceil(pad_w / 2.0)
+            pad_h /= 2.0
+            pad_w /= 2.0
 
-                obs = F.pad(obs, (int(np.ceil(pad_w)), int(np.floor(pad_w)), int(np.ceil(pad_h)), int(np.floor(pad_h))),
-                            mode="constant", value=0.5)
+            obs = F.pad(obs, (int(np.ceil(pad_w)), int(np.floor(pad_w)), int(np.ceil(pad_h)), int(np.floor(pad_h))),
+                        mode="constant", value=0.5)
 
-            for i, val in enumerate([obs, in_actions, rewards, done, meta, orig_obs]):
-                self.buffers[i].append(val)
+        for i, val in enumerate([obs, in_actions, rewards, done, meta, orig_obs]):
+            self.buffers[i].append(val)
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
-            return self.get_next(actions=actions, fill_buffer=True, outer_frameskip=outer_frameskip)
+            return self.get_next(actions=actions, fill_buffer=True)
 
         output = [torch.stack(list(self.buffers[0]), 1)] + [np.array(buffer).swapaxes(0, 1)
                                                             for buffer in self.buffers[1:]]
