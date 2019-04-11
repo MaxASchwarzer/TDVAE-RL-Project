@@ -156,12 +156,14 @@ class ReplayBuffer(Reader):
         return np.minimum(self.clip_errors, error + self.e) ** self.a
 
     def add(self, trajs, errors):
-        for error, ob, action, reward in zip(errors, *trajs):
-            self.buffer.add(self.calc_priority(error), (ob, action, reward))
+        priorities = self.calc_priority(errors)
+        for priority, ob, action, reward in zip(priorities, *trajs):
+            self.buffer.add(priority, (ob, action, reward))
 
     def update(self, indices, errors):
-        for idx, error in zip(indices, errors):
-            self.buffer.update(idx, self.calc_priority(error))
+        priorities = self.calc_priority(errors)
+        for idx, priority in zip(indices, priorities):
+            self.buffer.update(idx, priority)
 
     def get_buffer(self):
         return (self.buffer, self.beta)
