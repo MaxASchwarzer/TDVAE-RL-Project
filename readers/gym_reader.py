@@ -163,6 +163,7 @@ class ReplayBuffer(Reader):
         priority = self.calc_priority(np.inf)
         for ob, action, reward, done in zip(*trajs):
             # generate random (t1, t2) combination
+            # TODO don't let there be a done between t1 and t2
             t1 = np.random.randint(0, ob.size(0) - t_diff_max - 1)  # -1 to leave room for next reward
             t2 = t1 + np.random.randint(t_diff_min, t_diff_max + 1)
             self.buffer.add(priority, (ob, action, reward, done, t1, t2))
