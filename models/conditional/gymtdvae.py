@@ -42,8 +42,8 @@ class PreProcess(nn.Module):
         self.fc2 = nn.Linear(processed_x_size, processed_x_size)
 
     def forward(self, input_):
-        t = torch.relu(self.fc1(input_))
-        t = torch.relu(self.fc2(t))
+        t = F.elu(self.fc1(input_))
+        t = F.elu(self.fc2(t))
         return t
 
 
@@ -77,11 +77,11 @@ class ConvPreProcess(nn.Module):
 
     def forward(self, x):
         x1 = self.initial(x)
-        x1 = F.relu(x1)
+        x1 = F.elu(x1)
         x1 = self.bn1(x1)
         x2 = self.resnet(x1)
         x3 = self.fc1(x2.flatten(1, -1))
-        x3 = F.relu(x3)
+        x3 = F.elu(x3)
         x3 = self.bn2(x3)
         x4 = self.fc2(x3)
         return x4
@@ -120,10 +120,10 @@ class ConvDecoder(nn.Module):
 
     def forward(self, x):
         x1 = self.fc1(x)
-        x1 = F.relu(x1)
+        x1 = F.elu(x1)
         x1 = self.bn1(x1)
         x2 = self.fc2(x1)
-        x2 = F.relu(x2)
+        x2 = F.elu(x2)
         x2 = x2.view(x.shape[0], x2.shape[1]//np.prod(self.final_shape), self.final_shape[0], self.final_shape[1])
         x2 = self.bn2(x2)
         x3 = self.resnet(x2)
@@ -140,8 +140,8 @@ class AdvantageNetwork(nn.Module):
         self.fc3 = nn.Linear(hidden_size, action_space)
 
     def forward(self, z):
-        t = torch.tanh(self.fc1(z))
-        t = torch.tanh(self.fc2(t))
+        t = F.elu(self.fc1(z))
+        t = F.elu(self.fc2(t))
         p = self.fc3(t)
         return p
 
@@ -155,8 +155,8 @@ class ValueNetwork(nn.Module):
         self.fc3 = nn.Linear(hidden_size, 1)
 
     def forward(self, z):
-        t = torch.tanh(self.fc1(z))
-        t = torch.tanh(self.fc2(t))
+        t = F.elu(self.fc1(z))
+        t = F.elu(self.fc2(t))
         p = self.fc3(t)
         return p
 
