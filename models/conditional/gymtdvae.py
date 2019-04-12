@@ -199,7 +199,7 @@ class TDQVAE(nn.Module):
         self.process_x = ConvPreProcess(x_size, resnet_hidden_size, processed_x_size)
 
         # Multilayer LSTM for aggregating belief states
-        self.b_rnn = ops.MultilayerLSTM(input_size=processed_x_size+action_dim, hidden_size=b_size, layers=layers,
+        self.b_rnn = ops.MultilayerLSTM(input_size=processed_x_size+action_dim+1, hidden_size=b_size, layers=layers,
                                         every_layer_input=True, use_previous_higher=True)
 
         # Multilayer state model is used. Sampling is done by sampling higher layers first.
@@ -238,10 +238,11 @@ class TDQVAE(nn.Module):
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         if actions is not None:
+            rewards = (rewards[..., None] / 10.0).clamp(0.0, 2.0)
             action_embs = self.action_embedding(actions)
-            processed_x = torch.cat([processed_x, action_embs], -1)
+            processed_x = torch.cat([processed_x, action_embs, rewards], -1)
 
-        # aggregate the belief b  TODO rewards should be considered in b
+        # aggregate the belief b
         b = self.b_rnn(processed_x)  # size: bs, time, layers, dim
         b = b[:, -1]  # size: bs, layers, dim
 
@@ -264,12 +265,13 @@ class TDQVAE(nn.Module):
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         if actions is not None:
+            rewards = (rewards[..., None] / 10.0).clamp(0.0, 2.0)
             action_embs = self.action_embedding(actions)
-            processed_x = torch.cat([processed_x, action_embs], -1)
+            processed_x = torch.cat([processed_x, action_embs, rewards], -1)
         else:
             action_embs = None
 
-        # aggregate the belief b  TODO rewards should be considered in b
+        # aggregate the belief b
         b = self.b_rnn(processed_x)  # size: bs, time, layers, dim
 
         # replicate b multiple times
@@ -384,14 +386,15 @@ class TDQVAE(nn.Module):
         return (x, actions, rewards, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar,
                 qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2)
 
-    def visualize(self, x, t, n, actions):
+    def visualize(self, x, t, n, actions, rewards):
         # pre-process image x
         im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         if actions is not None:
+            rewards = (rewards[..., None] / 10.0).clamp(0.0, 2.0)
             action_embs = self.action_embedding(actions)
-            processed_x = torch.cat([processed_x, action_embs], -1)
+            processed_x = torch.cat([processed_x, action_embs, rewards], -1)
         else:
             action_embs = None
 

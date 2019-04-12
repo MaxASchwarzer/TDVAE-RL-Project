@@ -28,9 +28,9 @@ class GymRLRunner(BaseRLRunner):
         cond_batch = self.emulator.action_conditional_batch
         mean, std, imin, imax = (cond_batch.img_mean.numpy(), cond_batch.img_std.numpy(), cond_batch.img_true_min,
                                  cond_batch.img_true_max)
-        images, actions = batch[:2]
-        images, actions = self.model.prepare_batch([images[:, :t + 2], actions[:, :t + 2]])
-        out = self.model.run_batch([images, t, n, actions], visualize=True)
+        images, actions, rewards = batch[:3]
+        images, actions, rewards = self.model.prepare_batch([images[:, :t + 2], actions[:, :t + 2], rewards[:, :t + 2]])
+        out = self.model.run_batch([images, t, n, actions, rewards], visualize=True)
 
         batch = images.cpu().numpy()
         out = out.cpu().numpy().reshape(out.shape[0], out.shape[1], batch.shape[2], batch.shape[3], batch.shape[4])
