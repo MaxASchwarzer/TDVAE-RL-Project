@@ -14,7 +14,7 @@ class GymRunner(BaseRunner):
     def run_batch(self, batch, train=False):
         data = batch.get_next()
         images, actions = self.model.prepare_batch(data[0:2])
-        report = self.model.run_loss([images, actions, None, None])
+        report = self.model.run_loss([images, actions, None, None, None])
         if train:
             self.model.train(report['loss'], clip_grad_norm=self.flags.grad_norm)
         return report

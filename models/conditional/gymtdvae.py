@@ -321,7 +321,7 @@ class TDQVAE(nn.Module):
 
         return q1, q2, action_embs, b1, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2, pb_z1_b1_mu, pb_z1_b1_logvar
 
-    def forward(self, x, actions, t1, t2):
+    def forward(self, x, actions, t1, t2, returns):
         if t1 is None:
             t1 = torch.randint(0, x.size(1) - int(self.rl) - self.t_diff_max, (self.samples_per_seq, x.size(0)),
                                device=x.device)

@@ -133,13 +133,14 @@ class ReplayBuffer(Reader):
                  skip_init=False):
         self.t_diff_min = t_diff_min
         self.t_diff_max = t_diff_max
-        self.gamma = gamma
         self.clip_errors = clip_errors  # XXX default value ideal only for Seaquest
         self.buffer = misc.SumTree(buffer_size)
         self.beta = 0.4
         self.beta_increment_per_sampling = 0.001
         self.e = 0.01
         self.a = 0.6
+        self.gammas = np.array([gamma ** i for i in range(emulator.seq_len)])
+
         if skip_init:
             print('* Skipping replay buffer initialization')
         else:
@@ -165,10 +166,13 @@ class ReplayBuffer(Reader):
         for ob, action, reward, done in zip(*trajs):
             # generate random (t1, t2) combination
             # TODO don't let there be a done between t1 and t2
-            # TODO add returns between t1 and t2, use self.gamma
             t1 = np.random.randint(0, ob.size(0) - t_diff_max - 1)  # -1 to leave room for next reward
             t2 = t1 + np.random.randint(t_diff_min, t_diff_max + 1)
-            self.buffer.add(priority, (ob, action, reward, done, t1, t2))
+            if t1 + 1 <= t2:
+                returns = (self.gammas[:t2 - t1] * reward[t1 + 1:t2 + 1]).sum()
+            else:
+                returns = 0.0
+            self.buffer.add(priority, (ob, action, reward, done, t1, t2, returns))
 
     def update(self, indices, errors):
         priorities = self.calc_priority(errors)
@@ -212,9 +216,9 @@ class ReplayBuffer(Reader):
             epoch_size = min(max_batches, epoch_size)
         for _ in range(epochs * epoch_size):
             batch, idxs, is_weight = self.sample(batch_size)
-            obs, actions, rewards, done, t1, t2 = list(zip(*batch))
+            obs, actions, rewards, done, t1, t2, returns = list(zip(*batch))
             yield (torch.stack(obs), np.array(actions), np.array(rewards), np.array(done), np.array(t1), np.array(t2),
-                   np.array(is_weight), idxs)
+                   np.array(returns), np.array(is_weight), idxs)
 
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,
