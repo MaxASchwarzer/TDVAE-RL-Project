@@ -129,10 +129,11 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
 class ReplayBuffer(Reader):
     '''Replay buffer implementing prioritized experience replay.'''
 
-    def __init__(self, emulator, buffer_size, iters_per_epoch, t_diff_min, t_diff_max, clip_errors=2.0,
+    def __init__(self, emulator, buffer_size, iters_per_epoch, t_diff_min, t_diff_max, gamma, clip_errors=2.0,
                  skip_init=False):
         self.t_diff_min = t_diff_min
         self.t_diff_max = t_diff_max
+        self.gamma = gamma
         self.clip_errors = clip_errors  # XXX default value ideal only for Seaquest
         self.buffer = misc.SumTree(buffer_size)
         self.beta = 0.4
@@ -164,6 +165,7 @@ class ReplayBuffer(Reader):
         for ob, action, reward, done in zip(*trajs):
             # generate random (t1, t2) combination
             # TODO don't let there be a done between t1 and t2
+            # TODO add returns between t1 and t2, use self.gamma
             t1 = np.random.randint(0, ob.size(0) - t_diff_max - 1)  # -1 to leave room for next reward
             t2 = t1 + np.random.randint(t_diff_min, t_diff_max + 1)
             self.buffer.add(priority, (ob, action, reward, done, t1, t2))

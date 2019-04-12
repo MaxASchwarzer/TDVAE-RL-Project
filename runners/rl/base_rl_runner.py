@@ -24,7 +24,7 @@ class BaseRLRunner(runner.Runner):
                                                    flags.add_every_initial, flags.add_replay_every)
 
         reader = ReplayBuffer(self.emulator, flags.replay_size, flags.iters_per_epoch, flags.t_diff_min,
-                              flags.t_diff_max, skip_init=bool(flags.load_file))
+                              flags.t_diff_max, flags.discount_factor, skip_init=bool(flags.load_file))
 
         summary_dir = flags.log_dir + '/summary'
         log_keys.append('rewards_per_ep')
