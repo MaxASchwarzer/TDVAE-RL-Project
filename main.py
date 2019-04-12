@@ -30,7 +30,7 @@ if __name__ == '__main__':
     arg(parser, 'beta', type=float, default=1, help='Parameter controlling KL loss scale')
     arg(parser, 'd_weight', type=float, default=10, help='Parameter for discriminator loss scale')
     arg(parser, 'tdvae_weight', type=float, default=1.0, help='Parameter for TDVAE loss scale')
-    arg(parser, 'rl_weight', type=float, default=1.0, help='Parameter for DQN loss scale')
+    arg(parser, 'rl_weight', type=float, default=25.0, help='Parameter for DQN loss scale')
     arg(parser, 'grad_norm', type=float, default=5.0, help='gradient norm clipping (-1 to disable)')
     arg(parser, 'adversarial', type=bool, default=False, help='Use an auxiliary adversarial loss on reconstructions')
     arg(parser, 'rl', type=bool, default=False, help='Do RL')
