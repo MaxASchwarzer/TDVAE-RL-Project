@@ -232,14 +232,14 @@ class TDQVAE(nn.Module):
             self.time_encoding[i, :i+1] = 1
         self.time_encoding = nn.Parameter(self.time_encoding.float(), requires_grad=False)
 
-    def compute_q(self, x, actions):
+    def compute_q(self, x, actions, rewards):
         # pre-process image x
         im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         if actions is not None:
-            actions = self.action_embedding(actions)
-            processed_x = torch.cat([processed_x, actions], -1)
+            action_embs = self.action_embedding(actions)
+            processed_x = torch.cat([processed_x, action_embs], -1)
 
         # aggregate the belief b  TODO rewards should be considered in b
         b = self.b_rnn(processed_x)  # size: bs, time, layers, dim
@@ -258,7 +258,7 @@ class TDQVAE(nn.Module):
         z = torch.cat(zs, dim=1)
         return self.q_z(z)
 
-    def q_and_z_b(self, x, actions, t1, t2):
+    def q_and_z_b(self, x, actions, rewards, t1, t2):
         # pre-process image x
         im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
@@ -321,7 +321,7 @@ class TDQVAE(nn.Module):
 
         return q1, q2, action_embs, b1, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2, pb_z1_b1_mu, pb_z1_b1_logvar
 
-    def forward(self, x, actions, t1, t2, returns):
+    def forward(self, x, actions, rewards, t1, t2, returns):
         if t1 is None:
             t1 = torch.randint(0, x.size(1) - int(self.rl) - self.t_diff_max, (self.samples_per_seq, x.size(0)),
                                device=x.device)
@@ -334,7 +334,7 @@ class TDQVAE(nn.Module):
             t2 = t2[None, :]
 
         q1, q2, action_embs, b1, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2, pb_z1_b1_mu, pb_z1_b1_logvar = \
-            self.q_and_z_b(x, actions, t1, t2)
+            self.q_and_z_b(x, actions, rewards, t1, t2)
 
         t_encodings = self.time_encoding[t2 - t1 - 1].reshape(-1, self.t_diff_max_poss).contiguous()
         if action_embs is not None:
@@ -381,8 +381,8 @@ class TDQVAE(nn.Module):
         pd_x2_z2 = self.x_z(qb_z2_b2)
         # TODO maximize the likelihood of returns as well
 
-        return (x, actions, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu,
-                qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2)
+        return (x, actions, rewards, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar,
+                qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2)
 
     def visualize(self, x, t, n, actions):
         # pre-process image x
@@ -480,8 +480,8 @@ class GymTDQVAE(BaseGymTDVAE):
         self.target_net.load_state_dict(self.model.state_dict())
 
     def loss_function(self, forward_ret, labels=None):
-        (x_orig, actions, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar, qb_z2_b2_mu,
-         qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2) = forward_ret
+        (x_orig, actions, rewards, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar,
+         qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2) = forward_ret
 
         # replicate x multiple times
         x = x_orig.flatten(2, -1)
@@ -514,17 +514,18 @@ class GymTDQVAE(BaseGymTDVAE):
         if self.rl:
             # Note: x[t], rewards[t] is a result of actions[t]
             # Q(s[t], a[t+1]) = r[t+1] + γ max_a Q(s[t+1], a)
-            rewards, is_weight, done = labels
+            is_weight, done = labels
             # XXX reward clipping hardcoded for Seaquest
-            rewards = (rewards / 10.0).clamp(0.0, 2.0)
+            clipped_rewards = (rewards / 10.0).clamp(0.0, 2.0)
 
             t1_next = t1 + 1
             t2_next = t2 + 1
 
             with torch.no_grad():
                 # size: bs, action_space
-                q1_next_target, q2_next_target = self.target_net.q_and_z_b(x_orig, actions, t1_next, t2_next)[:2]
-                q1_next_index, q2_next_index = self.model.q_and_z_b(x_orig, actions, t1_next, t2_next)[:2]
+                q1_next_target, q2_next_target = self.target_net.q_and_z_b(x_orig, actions, rewards, t1_next,
+                                                                           t2_next)[:2]
+                q1_next_index, q2_next_index = self.model.q_and_z_b(x_orig, actions, rewards, t1_next, t2_next)[:2]
                 q1_next_index = torch.argmax(q1_next_index, dim=1, keepdim=True)
                 q2_next_index = torch.argmax(q2_next_index, dim=1, keepdim=True)
 
@@ -532,9 +533,9 @@ class GymTDQVAE(BaseGymTDVAE):
             done1_next = torch.gather(done, 2, t1_next[..., None]).view(-1)  # size: bs
             done2_next = torch.gather(done, 2, t2_next[..., None]).view(-1)  # size: bs
 
-            rewards = rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
-            r1_next = torch.gather(rewards, 2, t1_next[..., None]).view(-1)  # size: bs
-            r2_next = torch.gather(rewards, 2, t2_next[..., None]).view(-1)  # size: bs
+            clipped_rewards = clipped_rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
+            r1_next = torch.gather(clipped_rewards, 2, t1_next[..., None]).view(-1)  # size: bs
+            r2_next = torch.gather(clipped_rewards, 2, t2_next[..., None]).view(-1)  # size: bs
 
             actions = actions[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
             a1_next = torch.gather(actions, 2, t1_next[..., None]).view(-1)  # size: bs

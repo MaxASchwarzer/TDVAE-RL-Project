@@ -69,7 +69,7 @@ class BaseRLRunner(runner.Runner):
 
                 self.model.set_train(False)
                 with torch.no_grad():
-                    q = self.model.model.compute_q(obs, actions)
+                    q = self.model.model.compute_q(obs, actions, rewards)
                 self.model.set_train(True)
 
                 selected_actions = torch.argmax(q, dim=1).cpu().numpy()
