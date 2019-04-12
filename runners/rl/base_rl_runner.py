@@ -35,7 +35,7 @@ class BaseRLRunner(runner.Runner):
         self.model = model_class(self.flags, action_space=self.action_space, rl=True, replay_buffer=reader,
                                  optimizer=flags.optimizer, learning_rate=flags.learning_rate, cuda=flags.cuda,
                                  load_file=flags.load_file, save_every=flags.save_every, save_file=flags.save_file,
-                                 debug=flags.debug)
+                                 max_save_files=2, debug=flags.debug)
 
         # consider history length for simulation to be the expected t seen during TDQVAE training
         self.history_length = int(np.ceil(0.5 * (flags.seq_len + flags.t_diff_min))) - 1

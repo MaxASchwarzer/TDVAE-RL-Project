@@ -599,14 +599,14 @@ class GymTDQVAE(BaseGymTDVAE):
             self.adversarial_optim.load_state_dict(o_state_dict)
         print("* Loaded model from", load_file)
 
-    def save(self, save_file, max_files=5):
+    def save(self, save_file):
         "Save model to file."
         save_fname = save_file + "." + str(self.train_steps)
         print("* Saving model to", save_fname, "...")
         existing = glob.glob(save_file + ".*")
         pairs = [(f.rsplit('.', 1)[-1], f) for f in existing]
         pairs = sorted([(int(k), f) for k, f in pairs if k.isnumeric()], reverse=True)
-        for _, fname in pairs[max_files - 1:]:
+        for _, fname in pairs[self.max_save_files - 1:]:
             pathlib.Path(fname).unlink()
 
         if self.target_net is not None:
