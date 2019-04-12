@@ -54,6 +54,11 @@ class BaseRLRunner(runner.Runner):
         reader_iter = self.reader.iter_batches(split, self.batch_size, shuffle=train, partial_batching=not train,
                                                threads=self.threads, max_batches=self.max_batches)
         for i in range(self.reader.get_size(split)):
+            try:
+                train_batch = next(reader_iter)
+            except StopIteration:
+                break
+
             ratio = int(self.replay_ratio_decay.get_y(self.model.get_train_steps()))
             if self.model.get_train_steps() % ratio == 0:
                 obs, actions, rewards = self.emulator_state[:3]
@@ -84,7 +89,7 @@ class BaseRLRunner(runner.Runner):
                     self.rewards[dones] = 0.0
                     self.log_train_report({'rewards_per_ep': rewards_per_ep}, self.model.get_train_steps())
 
-            report = self.clean_report(self.run_batch(next(reader_iter), train=train))
+            report = self.clean_report(self.run_batch(train_batch, train=train))
             if self.model.get_train_steps() % self.flags.freeze_every == 0:
                 self.model.update_target_net()
 

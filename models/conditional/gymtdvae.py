@@ -259,14 +259,14 @@ class TDQVAE(nn.Module):
         z = torch.cat(zs, dim=1)
         return self.q_z(z)
 
-    def inference_and_q(self, x, actions, t1, t2):  # TODO get both q1, q2 from x->z->q
+    def q_and_z_b(self, x, actions, t1, t2):
         # pre-process image x
         im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         if actions is not None:
-            actions = self.action_embedding(actions)
-            processed_x = torch.cat([processed_x, actions], -1)
+            action_embs = self.action_embedding(actions)
+            processed_x = torch.cat([processed_x, action_embs], -1)
 
         # aggregate the belief b  TODO rewards should be considered in b
         b = self.b_rnn(processed_x)  # size: bs, time, layers, dim
@@ -274,17 +274,11 @@ class TDQVAE(nn.Module):
         # replicate b multiple times
         b = b[None, ...].expand(self.samples_per_seq, -1, -1, -1, -1)  # size: copy, bs, time, layers, dim
 
-        t_encodings = self.time_encoding[t2 - t1 - 1].reshape(-1, self.t_diff_max_poss).contiguous()
-
         # Element-wise indexing. sizes: bs, layers, dim
         b1 = torch.gather(b, 2, t1[..., None, None, None].expand(-1, -1, -1, b.size(3), b.size(4))).view(
             -1, b.size(3), b.size(4))
         b2 = torch.gather(b, 2, t2[..., None, None, None].expand(-1, -1, -1, b.size(3), b.size(4))).view(
             -1, b.size(3), b.size(4))
-        if actions is not None:
-            actions = actions[None, ...].expand(self.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
-            a1 = torch.gather(actions, 2, t1[..., None, None].expand(-1, -1, -1,
-                                                                     actions.shape[-1])).view(-1, actions.shape[-1])
 
         # q_B(z2 | b2)
         qb_z2_b2_mus, qb_z2_b2_logvars, qb_z2_b2s = [], [], []
@@ -302,6 +296,50 @@ class TDQVAE(nn.Module):
         qb_z2_b2_mu = torch.cat(qb_z2_b2_mus, dim=1)
         qb_z2_b2_logvar = torch.cat(qb_z2_b2_logvars, dim=1)
         qb_z2_b2 = torch.cat(qb_z2_b2s, dim=1)
+
+        # p_B(z1 | b1)
+        pb_z1_b1_mus, pb_z1_b1_logvars = [], []
+        for layer in range(self.layers - 1, -1, -1):
+            if layer == self.layers - 1:
+                pb_z1_b1_mu, pb_z1_b1_logvar = self.z_b[layer](b1[:, layer])
+            else:
+                pb_z1_b1_mu, pb_z1_b1_logvar = self.z_b[layer](torch.cat([b1[:, layer], pb_z1_b1], dim=1))
+            pb_z1_b1_mus.insert(0, pb_z1_b1_mu)
+            pb_z1_b1_logvars.insert(0, pb_z1_b1_logvar)
+            pb_z1_b1 = ops.reparameterize_gaussian(pb_z1_b1_mu, pb_z1_b1_logvar, self.training)
+
+        pb_z1_b1_mu = torch.cat(pb_z1_b1_mus, dim=1)
+        pb_z1_b1_logvar = torch.cat(pb_z1_b1_logvars, dim=1)
+
+        if self.rl:
+            # Q values
+            q1 = self.q_z(pb_z1_b1_mu)
+            q2 = self.q_z(qb_z2_b2_mu)
+        else:
+            q1, q2 = 0, 0
+
+        return q1, q2, action_embs, b1, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2, pb_z1_b1_mu, pb_z1_b1_logvar
+
+    def forward(self, x, actions, t1, t2):
+        if t1 is None:
+            t1 = torch.randint(0, x.size(1) - int(self.rl) - self.t_diff_max, (self.samples_per_seq, x.size(0)),
+                               device=x.device)
+        else:
+            t1 = t1[None, :]
+        if t2 is None:
+            t2 = t1 + torch.randint(self.t_diff_min, self.t_diff_max + 1, (self.samples_per_seq, x.size(0)),
+                                    device=x.device)
+        else:
+            t2 = t2[None, :]
+
+        q1, q2, action_embs, b1, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2, pb_z1_b1_mu, pb_z1_b1_logvar = \
+            self.q_and_z_b(x, actions, t1, t2)
+
+        t_encodings = self.time_encoding[t2 - t1 - 1].reshape(-1, self.t_diff_max_poss).contiguous()
+        if action_embs is not None:
+            action_embs = action_embs[None, ...].expand(self.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
+            a1 = torch.gather(action_embs, 2, t1[..., None, None].expand(
+                -1, -1, -1, action_embs.shape[-1])).view(-1, action_embs.shape[-1])
 
         # q_S(z1 | z2, b1, b2) ~= q_S(z1 | z2, b1)  XXX why a1 here?
         qs_z1_z2_b1_mus, qs_z1_z2_b1_logvars, qs_z1_z2_b1s = [], [], []
@@ -323,30 +361,6 @@ class TDQVAE(nn.Module):
         qs_z1_z2_b1_logvar = torch.cat(qs_z1_z2_b1_logvars, dim=1)
         qs_z1_z2_b1 = torch.cat(qs_z1_z2_b1s, dim=1)
 
-        if self.rl:
-            # Q values
-            q1 = self.q_z(qs_z1_z2_b1)
-            q2 = self.q_z(qb_z2_b2)
-        else:
-            q1, q2 = 0, 0
-        return (q1, q2, t_encodings, b1, a1, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, qs_z1_z2_b1s, qs_z1_z2_b1, qb_z2_b2_mu,
-                qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2)
-
-    def forward(self, x, actions, t1, t2):
-        if t1 is None:
-            t1 = torch.randint(0, x.size(1) - int(self.rl) - self.t_diff_max, (self.samples_per_seq, x.size(0)),
-                               device=x.device)
-        else:
-            t1 = t1[None, :]
-        if t2 is None:
-            t2 = t1 + torch.randint(self.t_diff_min, self.t_diff_max + 1, (self.samples_per_seq, x.size(0)),
-                                    device=x.device)
-        else:
-            t2 = t2[None, :]
-
-        (q1, q2, t_encodings, b1, a1, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, qs_z1_z2_b1s, qs_z1_z2_b1, qb_z2_b2_mu,
-         qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2) = self.inference_and_q(x, actions, t1, t2)
-
         # p_T(z2 | z1), also conditions on q_B(z2) from higher layer
         pt_z2_z1_mus, pt_z2_z1_logvars = [], []
         for layer in range(self.layers - 1, -1, -1):
@@ -360,20 +374,6 @@ class TDQVAE(nn.Module):
 
         pt_z2_z1_mu = torch.cat(pt_z2_z1_mus, dim=1)
         pt_z2_z1_logvar = torch.cat(pt_z2_z1_logvars, dim=1)
-
-        # p_B(z1 | b1)
-        pb_z1_b1_mus, pb_z1_b1_logvars = [], []
-        for layer in range(self.layers - 1, -1, -1):
-            if layer == self.layers - 1:
-                pb_z1_b1_mu, pb_z1_b1_logvar = self.z_b[layer](b1[:, layer])
-            else:
-                pb_z1_b1_mu, pb_z1_b1_logvar = self.z_b[layer](torch.cat([b1[:, layer], qs_z1_z2_b1s[layer + 1]],
-                                                                         dim=1))
-            pb_z1_b1_mus.insert(0, pb_z1_b1_mu)
-            pb_z1_b1_logvars.insert(0, pb_z1_b1_logvar)
-
-        pb_z1_b1_mu = torch.cat(pb_z1_b1_mus, dim=1)
-        pb_z1_b1_logvar = torch.cat(pb_z1_b1_logvars, dim=1)
 
         # p_D(x2 | z2)
         pd_x2_z2 = self.x_z(qb_z2_b2)
@@ -517,9 +517,9 @@ class GymTDQVAE(BaseGymTDVAE):
             t2_next = t2 + 1
 
             with torch.no_grad():
-                  # size: bs, action_space
-                q1_next_target, q2_next_target = self.target_net.inference_and_q(x_orig, actions, t1_next, t2_next)[:2]
-                q1_next_index, q2_next_index = self.model.inference_and_q(x_orig, actions, t1_next, t2_next)[:2]
+                # size: bs, action_space
+                q1_next_target, q2_next_target = self.target_net.q_and_z_b(x_orig, actions, t1_next, t2_next)[:2]
+                q1_next_index, q2_next_index = self.model.q_and_z_b(x_orig, actions, t1_next, t2_next)[:2]
                 q1_next_index = torch.argmax(q1_next_index, dim=1, keepdim=True)
                 q2_next_index = torch.argmax(q2_next_index, dim=1, keepdim=True)
 
@@ -543,12 +543,10 @@ class GymTDQVAE(BaseGymTDVAE):
             target_q1 = r1_next + self.flags.discount_factor * (1.0 - done1_next) * q1_next
             target_q2 = r2_next + self.flags.discount_factor * (1.0 - done2_next) * q2_next
 
-            # TODO remove tdvae weighing here after changing q1 path
-            rl_loss = (self.flags.tdvae_weight * F.smooth_l1_loss(pred_q1, target_q1, reduction='none') +
-                       F.smooth_l1_loss(pred_q2, target_q2, reduction='none')) / (1.0 + self.flags.tdvae_weight)
+            rl_loss = 0.5 * (F.smooth_l1_loss(pred_q1, target_q1, reduction='none') +
+                             F.smooth_l1_loss(pred_q2, target_q2, reduction='none'))
             # errors for prioritized experience replay
-            rl_errors = ((self.flags.tdvae_weight * torch.abs(pred_q1 - target_q1) +
-                          torch.abs(pred_q2 - target_q2)) / (1.0 + self.flags.tdvae_weight)).detach()
+            rl_errors = 0.5 * (torch.abs(pred_q1 - target_q1) + torch.abs(pred_q2 - target_q2)).detach()
         else:
             rl_loss = 0.0
             is_weight = 1.0
