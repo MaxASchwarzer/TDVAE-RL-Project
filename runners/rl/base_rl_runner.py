@@ -20,6 +20,8 @@ class BaseRLRunner(runner.Runner):
         self.emulator_state = next(self.emulator_iter).get_next()[:4]
         self.action_space = self.emulator.action_space()
         self.eps_decay = misc.LinearDecay(flags.eps_decay_start, flags.eps_decay_end, 1.0, flags.eps_final)
+        self.replay_ratio_decay = misc.LinearDecay(flags.add_every_start, flags.add_every_end,
+                                                   flags.add_every_initial, flags.add_replay_every)
 
         reader = ReplayBuffer(self.emulator, flags.replay_size, flags.iters_per_epoch, flags.t_diff_min,
                               flags.t_diff_max, skip_init=bool(flags.load_file))
@@ -57,7 +59,8 @@ class BaseRLRunner(runner.Runner):
             except StopIteration:
                 break
 
-            if self.model.get_train_steps() % self.flags.add_replay_every == 0:
+            ratio = int(self.replay_ratio_decay.get_y(self.model.get_train_steps()))
+            if self.model.get_train_steps() % ratio == 0:
                 obs, actions, rewards = self.emulator_state[:3]
                 obs = obs[:, self.simulation_start:]
                 actions = actions[:, self.simulation_start:]
