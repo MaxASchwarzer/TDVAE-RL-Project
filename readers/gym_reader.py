@@ -129,7 +129,7 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
 class ReplayBuffer(Reader):
     '''Replay buffer implementing prioritized experience replay.'''
 
-    def __init__(self, emulator, buffer_size, iters_per_epoch, t_diff_min, t_diff_max, initial_len=0,
+    def __init__(self, emulator, buffer_size, iters_per_epoch, t_diff_min, t_diff_max, gamma, initial_len=0,
                  clip_errors=2.0, skip_init=False,):
         self.t_diff_min = t_diff_min
         self.t_diff_max = t_diff_max
@@ -139,6 +139,8 @@ class ReplayBuffer(Reader):
         self.beta_increment_per_sampling = 0.001
         self.e = 0.01
         self.a = 0.6
+        self.gammas = np.array([gamma ** i for i in range(emulator.seq_len)])
+
         if skip_init:
             print('* Skipping replay buffer initialization')
         else:
@@ -172,7 +174,11 @@ class ReplayBuffer(Reader):
             else:
                 t1 = np.random.randint(0, upper)  # -1 to leave room for next reward
             t2 = t1 + np.random.randint(t_diff_min, min(t_diff_max + 1, new_len - t1-1))
-            self.buffer.add(priority, (ob, action, reward, done, t1, t2))
+            if t1 + 1 <= t2:
+                returns = (self.gammas[:t2 - t1] * reward[t1 + 1:t2 + 1]).sum()
+            else:
+                returns = 0.0
+            self.buffer.add(priority, (ob, action, reward, done, t1, t2, returns))
 
     def update(self, indices, errors):
         priorities = self.calc_priority(errors)
@@ -216,9 +222,9 @@ class ReplayBuffer(Reader):
             epoch_size = min(max_batches, epoch_size)
         for _ in range(epochs * epoch_size):
             batch, idxs, is_weight = self.sample(batch_size)
-            obs, actions, rewards, done, t1, t2 = list(zip(*batch))
+            obs, actions, rewards, done, t1, t2, returns = list(zip(*batch))
             yield (torch.stack(obs), np.array(actions), np.array(rewards), np.array(done), np.array(t1), np.array(t2),
-                   np.array(is_weight), idxs)
+                   np.array(returns), np.array(is_weight), idxs)
 
 
 # The following code is largely adapted from https://github.com/agakshat/gym_vecenv,

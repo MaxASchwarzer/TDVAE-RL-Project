@@ -9,7 +9,7 @@ from pylego import misc, runner
 
 
 def trim_batch(seq_len, batch):
-    (obs, actions, rewards, done, t1, t2, is_weight, idxs) = batch
+    (obs, actions, rewards, done, t1, t2, returns, is_weight, idxs) = batch
     if seq_len == obs.shape[1]:
         return batch
     else:
@@ -17,7 +17,7 @@ def trim_batch(seq_len, batch):
         rewards = rewards[:, :seq_len]
         actions = actions[:, :seq_len]
 
-    return obs, actions, rewards, done, t1, t2, is_weight, idxs
+    return obs, actions, rewards, done, t1, t2, returns, is_weight, idxs
 
 
 class BaseRLRunner(runner.Runner):
@@ -44,7 +44,7 @@ class BaseRLRunner(runner.Runner):
         self.seq_len_decay = misc.LinearDecay(flags.seq_len_decay_start, flags.seq_len_decay_end,
                                               flags.seq_len_initial, flags.seq_len)
         reader = ReplayBuffer(self.emulator, flags.replay_size, flags.iters_per_epoch, flags.t_diff_min,
-                              flags.t_diff_max, initial_len=self.seq_len_decay.get_y(0),
+                              flags.t_diff_max, flags.discount_factor, initial_len=self.seq_len_decay.get_y(0),
                               skip_init=bool(flags.load_file))
 
         summary_dir = flags.log_dir + '/summary'
@@ -91,7 +91,7 @@ class BaseRLRunner(runner.Runner):
 
                 self.model.set_train(False)
                 with torch.no_grad():
-                    q = self.model.model.compute_q(obs, actions)
+                    q = self.model.model.compute_q(obs, actions, rewards)
                 self.model.set_train(True)
 
                 selected_actions = torch.argmax(q, dim=1).cpu().numpy()
