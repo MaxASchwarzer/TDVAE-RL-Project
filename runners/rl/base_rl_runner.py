@@ -8,6 +8,18 @@ from readers.gym_reader import GymReader, ReplayBuffer
 from pylego import misc, runner
 
 
+def trim_batch(seq_len, batch):
+    (obs, actions, rewards, done, t1, t2, is_weight, idxs) = batch
+    if seq_len == obs.shape[1]:
+        return batch
+    else:
+        obs = obs[:, :seq_len]
+        rewards = rewards[:, :seq_len]
+        actions = actions[:, :seq_len]
+
+    return obs, actions, rewards, done, t1, t2, is_weight, idxs
+
+
 class BaseRLRunner(runner.Runner):
 
     def __init__(self, flags, model_class, log_keys, *args, **kwargs):
@@ -19,12 +31,21 @@ class BaseRLRunner(runner.Runner):
         self.emulator_iter = self.emulator.iter_batches('train', flags.batch_size, threads=flags.threads)
         self.emulator_state = next(self.emulator_iter).get_next()[:4]
         self.action_space = self.emulator.action_space()
+        self.seq_len_upper = flags.seq_len
         self.eps_decay = misc.LinearDecay(flags.eps_decay_start, flags.eps_decay_end, 1.0, flags.eps_final)
+        if flags.add_every_initial < 0:
+            flags.add_every_initial = flags.add_replay_every
         self.replay_ratio_decay = misc.LinearDecay(flags.add_every_start, flags.add_every_end,
                                                    flags.add_every_initial, flags.add_replay_every)
 
+        if flags.seq_len_initial < 0:
+            flags.seq_len_initial = flags.seq_len
+
+        self.seq_len_decay = misc.LinearDecay(flags.seq_len_decay_start, flags.seq_len_decay_end,
+                                              flags.seq_len_initial, flags.seq_len)
         reader = ReplayBuffer(self.emulator, flags.replay_size, flags.iters_per_epoch, flags.t_diff_min,
-                              flags.t_diff_max, skip_init=bool(flags.load_file))
+                              flags.t_diff_max, initial_len=self.seq_len_decay.get_y(0),
+                              skip_init=bool(flags.load_file))
 
         summary_dir = flags.log_dir + '/summary'
         log_keys.append('rewards_per_ep')
@@ -60,6 +81,7 @@ class BaseRLRunner(runner.Runner):
                 break
 
             ratio = int(self.replay_ratio_decay.get_y(self.model.get_train_steps()))
+            seq_len = int(self.seq_len_decay.get_y(self.model.get_train_steps()))
             if self.model.get_train_steps() % ratio == 0:
                 obs, actions, rewards = self.emulator_state[:3]
                 obs = obs[:, self.simulation_start:]
@@ -79,7 +101,9 @@ class BaseRLRunner(runner.Runner):
                 actions = np.where(do_random, random_actions, selected_actions)
 
                 self.emulator_state = next(self.emulator_iter).get_next(actions)[:4]
-                self.reader.add(self.emulator_state)  # add trajectory to replay buffer
+
+                # add trajectory to replay buffer
+                self.reader.add(self.emulator_state, new_len=seq_len)
 
                 rewards = self.emulator_state[2][:, -1]
                 self.rewards += rewards
@@ -89,6 +113,7 @@ class BaseRLRunner(runner.Runner):
                     self.rewards[dones] = 0.0
                     self.log_train_report({'rewards_per_ep': rewards_per_ep}, self.model.get_train_steps())
 
+            train_batch = trim_batch(seq_len, train_batch)
             report = self.clean_report(self.run_batch(train_batch, train=train))
             if self.model.get_train_steps() % self.flags.freeze_every == 0:
                 self.model.update_target_net()

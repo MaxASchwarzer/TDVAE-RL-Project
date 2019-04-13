@@ -7,7 +7,7 @@ from torch import nn
 from torch.nn import functional as F
 import numpy as np
 
-from pylego import ops
+from pylego import ops, misc
 
 from ..baseconditional import BaseGymTDVAE
 from .utils import Discriminator, SAGANGenerator
@@ -443,13 +443,19 @@ class GymTDQVAE(BaseGymTDVAE):
         self.replay_buffer = replay_buffer
 
         self.adversarial = flags.adversarial
-        self.beta = flags.beta
+        self.beta_decay = misc.LinearDecay(flags.beta_decay_start, flags.beta_decay_end,
+                                              flags.beta_initial, flags.beta)
+
         self.d_weight = flags.d_weight
         self.d_steps = flags.d_steps
+        if flags.t_diff_max_poss < 0:
+            t_diff_max_poss = flags.seq_len - 1
+        else:
+            t_diff_max_poss = flags.t_diff_max_poss
 
         if model is None:
             model_args = [(3, 80, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
-                          flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, flags.t_diff_max_poss]
+                          flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, t_diff_max_poss]
             model_kwargs = {'action_space': action_space}
             if rl:
                 model_kwargs['rl'] = True
@@ -566,7 +572,8 @@ class GymTDQVAE(BaseGymTDVAE):
         kl_shift_qb_pt = is_weight * kl_shift_qb_pt
         rl_loss = is_weight * rl_loss
 
-        tdvae_loss = bce_diff + hidden_loss + self.d_weight * g_loss + self.beta * (kl_div_qs_pb + kl_shift_qb_pt)
+        beta = self.beta_decay.get_y(self.get_train_steps())
+        tdvae_loss = bce_diff + hidden_loss + self.d_weight * g_loss + beta * (kl_div_qs_pb + kl_shift_qb_pt)
         loss = self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss
 
         if self.rl:
