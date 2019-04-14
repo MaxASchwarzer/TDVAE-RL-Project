@@ -446,8 +446,7 @@ class GymTDQVAE(BaseGymTDVAE):
         self.replay_buffer = replay_buffer
 
         self.adversarial = flags.adversarial
-        self.beta_decay = misc.LinearDecay(flags.beta_decay_start, flags.beta_decay_end,
-                                              flags.beta_initial, flags.beta)
+        self.beta_decay = misc.LinearDecay(flags.beta_decay_start, flags.beta_decay_end, flags.beta_initial, flags.beta)
 
         self.d_weight = flags.d_weight
         self.d_steps = flags.d_steps
@@ -542,7 +541,8 @@ class GymTDQVAE(BaseGymTDVAE):
             done1_next = torch.gather(done, 2, t1_next[..., None]).view(-1)  # size: bs
             done2_next = torch.gather(done, 2, t2_next[..., None]).view(-1)  # size: bs
 
-            clipped_rewards = clipped_rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)  # size: copy, bs, time
+            # size: copy, bs, time
+            clipped_rewards = clipped_rewards[None, ...].expand(self.flags.samples_per_seq, -1, -1)
             r1_next = torch.gather(clipped_rewards, 2, t1_next[..., None]).view(-1)  # size: bs
             r2_next = torch.gather(clipped_rewards, 2, t2_next[..., None]).view(-1)  # size: bs
 

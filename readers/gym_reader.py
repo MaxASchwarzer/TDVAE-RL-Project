@@ -129,7 +129,7 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
 class ReplayBuffer(Reader):
     '''Replay buffer implementing prioritized experience replay.'''
 
-    def __init__(self, emulator, buffer_size, iters_per_epoch, t_diff_min, t_diff_max, gamma, initial_len=0,
+    def __init__(self, emulator, buffer_size, iters_per_epoch, t_diff_min, t_diff_max, gamma, initial_len=-1,
                  clip_errors=2.0, skip_init=False,):
         self.t_diff_min = t_diff_min
         self.t_diff_max = t_diff_max
@@ -149,7 +149,7 @@ class ReplayBuffer(Reader):
                 for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
-                    self.add(conditional_batch.get_next()[:4], new_len=initial_len)
+                    self.add(conditional_batch.get_next()[:4], truncated_len=initial_len)
                     if self.buffer.count >= buffer_size:
                         break
             print('* Replay buffer initialized')
@@ -158,22 +158,40 @@ class ReplayBuffer(Reader):
     def calc_priority(self, error):
         return np.minimum(self.clip_errors, error + self.e) ** self.a
 
-    def add(self, trajs, t_diff_min=None, t_diff_max=None, new_len=0):
+    def add(self, trajs, t_diff_min=None, t_diff_max=None, truncated_len=-1):
         t_diff_min = t_diff_min or self.t_diff_min
         t_diff_max = t_diff_max or self.t_diff_max
 
         priority = self.calc_priority(np.inf)
         for ob, action, reward, done in zip(*trajs):
-            # generate random (t1, t2) combination
-            # TODO don't let there be a done between t1 and t2
-            if new_len == 0:
-                new_len = ob.size(0)
-            upper = max(0, new_len - t_diff_max - 1)
-            if upper == 0:
-                t1 = 0
+            if truncated_len <= 0:
+                truncated_len = ob.size(0)
+
+            # generate random (t1, t2) combination such that there is no done between them
+            bool_done = done[:truncated_len - 1] > 1e-6
+            if np.any(bool_done):
+                # first, get segments that don't have dones within them (except for final state)
+                done_idx = np.nonzero(bool_done)[0]
+                min_t1s = np.concatenate([[-1], done_idx]) + 1
+                max_t2s = np.concatenate([done_idx, [truncated_len - 1]]) - 1 # t_len-1 to leave room for next reward
+                max_t1s = max_t2s - t_diff_min
+                t1s_possible = max_t2s - min_t1s - t_diff_min + 1
+                if np.all(t1s_possible < 1):
+                    continue  # skip this trajectory
+                possible_combs = np.zeros_like(t1s_possible)
+                for i, t1s_p in enumerate(t1s_possible):
+                    for j in range(t1s_p):
+                        possible_combs[i] += min(j, t_diff_max - t_diff_min) + 1
+                segment_probs = possible_combs / possible_combs.sum()
+                segment = np.random.choice(segment_probs.shape[0], p=segment_probs)
+                min_t1, max_t1, max_t2 = min_t1s[segment], max_t1s[segment], max_t2s[segment]
             else:
-                t1 = np.random.randint(0, upper)  # -1 to leave room for next reward
-            t2 = t1 + np.random.randint(t_diff_min, min(t_diff_max + 1, new_len - t1-1))
+                min_t1 = 0
+                max_t2 = truncated_len - 2  # -1 (of 2) to leave room for next reward
+                max_t1 = max_t2 - t_diff_min
+
+            t1 = np.random.randint(min_t1, max_t1 + 1)
+            t2 = np.random.randint(t1 + t_diff_min, max_t2 + 1)
             if t1 + 1 <= t2:
                 returns = (self.gammas[:t2 - t1] * reward[t1 + 1:t2 + 1]).sum()
             else:
