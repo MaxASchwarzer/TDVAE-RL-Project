@@ -135,11 +135,15 @@ class ReturnsDecoder(nn.Module):
 
     def __init__(self, z_size, hidden_size):
         super().__init__()
-        self.fc = nn.Linear(z_size, hidden_size)
-        self.dblock = DBlock(hidden_size, hidden_size, 1)
+        self.fc1 = nn.Linear(z_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, 1)
 
     def forward(self, z):
-        return self.dblock(F.elu(self.fc(z)))
+        t = F.elu(self.fc1(z))
+        t = F.elu(self.fc2(t))
+        p = self.fc3(t)
+        return p
 
 
 class AdvantageNetwork(nn.Module):
@@ -395,13 +399,12 @@ class TDQVAE(nn.Module):
         pd_x2_z2 = self.x_z(qb_z2_b2)
         # p_D(g2 | z1, z2, a1', t2-t1)
         if self.rl:
-            pd_g2_z2_mu, pd_g2_z2_logvar = self.g_z(torch.cat([qs_z1_z2_b1, qb_z2_b2, a1_next, t_encodings], dim=1))
+            pd_g2_z2_mu = self.g_z(torch.cat([qs_z1_z2_b1, qb_z2_b2, a1_next, t_encodings], dim=1))
         else:
-            pd_g2_z2_mu, pd_g2_z2_logvar = None, None
+            pd_g2_z2_mu = None
 
         return (x, actions, rewards, done, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar,
-                qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, pd_g2_z2_mu,
-                pd_g2_z2_logvar, q1, q2)
+                qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, pd_g2_z2_mu, q1, q2)
 
     def visualize(self, x, t, n, actions, rewards, done):
         # pre-process image x
@@ -506,8 +509,8 @@ class GymTDQVAE(BaseGymTDVAE):
 
     def loss_function(self, forward_ret, labels=None):
         (x_orig, actions, rewards, done, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar,
-         qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, pd_g2_z2_mu, pd_g2_z2_logvar,
-         q1, q2) = forward_ret
+         qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, pd_g2_z2_mu, q1,
+         q2) = forward_ret
 
         # replicate x multiple times
         x = x_orig.flatten(2, -1)
@@ -542,9 +545,8 @@ class GymTDQVAE(BaseGymTDVAE):
             # Q(s[t], a[t+1]) = r[t+1] + γ max_a Q(s[t+1], a)
             returns, is_weight = labels
 
-            # use pd_g2_z2_mu, pd_g2_z2_logvar for returns modeling
-            # TODO this will explode when logvar << 0, fix
-            returns_loss = -ops.gaussian_log_prob(pd_g2_z2_mu, pd_g2_z2_logvar, returns[..., None])
+            # use pd_g2_z2_mu for returns modeling
+            returns_loss = (pd_g2_z2_mu.squeeze(1) - (10.0 * returns)) ** 2
 
             # XXX reward clipping hardcoded for Seaquest
             clipped_rewards = (rewards / 10.0).clamp(0.0, 2.0)

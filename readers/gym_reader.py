@@ -193,7 +193,8 @@ class ReplayBuffer(Reader):
             t1 = np.random.randint(min_t1, max_t1 + 1)
             t2 = np.random.randint(t1 + t_diff_min, max_t2 + 1)
             if t1 + 1 <= t2:
-                returns = (self.gammas[:t2 - t1] * reward[t1 + 1:t2 + 1]).sum()
+                clipped_reward = np.clip(reward[t1 + 1:t2 + 1] / 10.0, 0.0, 2.0)
+                returns = (self.gammas[:t2 - t1] * clipped_reward).sum()
             else:
                 returns = 0.0
             self.buffer.add(priority, (ob, action, reward, done, t1, t2, returns))
