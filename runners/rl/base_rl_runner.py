@@ -115,6 +115,7 @@ class BaseRLRunner(runner.Runner):
             train_batch = trim_batch(seq_len, train_batch)
             report = self.clean_report(self.run_batch(train_batch, train=train))
             if self.model.get_train_steps() % self.flags.freeze_every == 0:
+                print('* Updating target Q network')
                 self.model.update_target_net()
 
             report['time_'] = time.time() - timestamp
