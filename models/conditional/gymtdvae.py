@@ -605,7 +605,8 @@ class GymTDQVAE(BaseGymTDVAE):
         rl_loss = is_weight * rl_loss
 
         beta = self.beta_decay.get_y(self.get_train_steps())
-        tdvae_loss = bce_diff + returns_loss + hidden_loss + self.d_weight * g_loss + beta * (kl_div_qs_pb + kl_shift_qb_pt)
+        tdvae_loss = bce_diff + returns_loss + hidden_loss + self.d_weight * g_loss + beta * (kl_div_qs_pb +
+                                                                                              kl_shift_qb_pt)
         loss = self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss
 
         if self.rl:  # workaround to work with non-RL setting
