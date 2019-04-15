@@ -65,7 +65,7 @@ if __name__ == '__main__':
     arg(parser, 't_diff_max', type=int, default=4, help='maximum time difference t2-t1')
     arg(parser, 't_diff_max_poss', type=int, default=-1, help='Maximum time difference across entire curriculum, not '
                                                               'just current run. Needed to set weight dims correctly. '
-                                                              'Default of -1 uses seq_len - 1 instead.')
+                                                              'Default of -1 uses seq_len - 1 instead.')  # TODO remove
     arg(parser, 'epochs', type=int, default=50000, help='no. of training epochs')
     arg(parser, 'max_batches', type=int, default=-1, help='max batches per split (if not -1, for debugging)')
     arg(parser, 'print_every', type=int, default=10, help='print losses every these many steps')
