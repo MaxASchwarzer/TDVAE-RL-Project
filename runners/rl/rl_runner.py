@@ -14,7 +14,7 @@ class GymRLRunner(BaseRLRunner):
     def run_batch(self, batch, train=False):
         images, actions, rewards, done, t1, t2, returns, is_weight = self.model.prepare_batch(batch[:8])
         replay_indices = batch[8]
-        report = self.model.run_loss([images, actions, rewards, done, t1, t2, returns], labels=is_weight)
+        report = self.model.run_loss([images, actions, rewards, done, t1, t2], labels=(returns, is_weight))
         rl_errors = report.pop('rl_errors', None).cpu().numpy()
         self.reader.update(replay_indices, rl_errors)
         if train:

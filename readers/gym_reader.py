@@ -139,7 +139,7 @@ class ReplayBuffer(Reader):
         self.beta_increment_per_sampling = 0.001
         self.e = 0.01
         self.a = 0.6
-        self.gammas = np.array([gamma ** i for i in range(emulator.seq_len)])
+        self.gammas = np.array([gamma ** i for i in range(emulator.seq_len)], dtype=np.float32)
 
         if skip_init:
             print('* Skipping replay buffer initialization')

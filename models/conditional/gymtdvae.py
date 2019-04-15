@@ -131,6 +131,17 @@ class ConvDecoder(nn.Module):
         return torch.sigmoid(x4.flatten(1, -1))
 
 
+class ReturnsDecoder(nn.Module):
+
+    def __init__(self, z_size, hidden_size):
+        super().__init__()
+        self.fc = nn.Linear(z_size, hidden_size)
+        self.dblock = DBlock(hidden_size, hidden_size, 1)
+
+    def forward(self, z):
+        return self.dblock(F.elu(self.fc(z)))
+
+
 class AdvantageNetwork(nn.Module):
 
     def __init__(self, z_size, hidden_size, action_space):
@@ -203,18 +214,18 @@ class TDQVAE(nn.Module):
                                         every_layer_input=True, use_previous_higher=True)
 
         # Multilayer state model is used. Sampling is done by sampling higher layers first.
-        self.z_b = nn.ModuleList([DBlock(b_size + (z_size if layer < layers - 1 else 0), 2*b_size, z_size)
+        self.z_b = nn.ModuleList([DBlock(b_size + (z_size if layer < layers - 1 else 0), layers * b_size, z_size)
                                   for layer in range(layers)])
 
         # Given belief and state at time t2, infer the state at time t1
         self.z1_z2_b = nn.ModuleList([DBlock(b_size + layers * z_size + (z_size if layer < layers - 1 else 0)
-                                             + t_diff_max_poss, 2 * b_size, z_size)
+                                             + t_diff_max_poss, layers * b_size, z_size)
                                       for layer in range(layers)])
 
         # Given the state at time t1, model state at time t2 through state transition
         self.z2_z1 = nn.ModuleList([DBlock(layers * z_size + action_dim +
                                            (z_size if layer < layers - 1 else 0) + t_diff_max_poss,
-                                           2*b_size, z_size)
+                                           layers * b_size, z_size)
                                     for layer in range(layers)])
 
         # state to observation
@@ -223,7 +234,8 @@ class TDQVAE(nn.Module):
 
         # state to Q value per action
         if rl:
-            self.q_z = QNetwork(layers * z_size, resnet_hidden_size, action_space)
+            self.g_z = ReturnsDecoder((layers * z_size * 2) + action_dim + t_diff_max_poss, layers * b_size)
+            self.q_z = QNetwork(layers * z_size, layers * b_size, action_space)
 
         self.action_embedding = nn.Embedding(action_space, action_dim)
 
@@ -323,7 +335,7 @@ class TDQVAE(nn.Module):
 
         return q1, q2, action_embs, b1, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2, pb_z1_b1_mu, pb_z1_b1_logvar
 
-    def forward(self, x, actions, rewards, done, t1, t2, returns):
+    def forward(self, x, actions, rewards, done, t1, t2):
         if t1 is None:
             t1 = torch.randint(0, x.size(1) - int(self.rl) - self.t_diff_max, (self.samples_per_seq, x.size(0)),
                                device=x.device)
@@ -381,10 +393,15 @@ class TDQVAE(nn.Module):
 
         # p_D(x2 | z2)
         pd_x2_z2 = self.x_z(qb_z2_b2)
-        # TODO maximize the likelihood of returns as well
+        # p_D(g2 | z1, z2, a1', t2-t1)
+        if self.rl:
+            pd_g2_z2_mu, pd_g2_z2_logvar = self.g_z(torch.cat([qs_z1_z2_b1, qb_z2_b2, a1_next, t_encodings], dim=1))
+        else:
+            pd_g2_z2_mu, pd_g2_z2_logvar = None, None
 
         return (x, actions, rewards, done, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar,
-                qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2)
+                qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, pd_g2_z2_mu,
+                pd_g2_z2_logvar, q1, q2)
 
     def visualize(self, x, t, n, actions, rewards, done):
         # pre-process image x
@@ -489,7 +506,8 @@ class GymTDQVAE(BaseGymTDVAE):
 
     def loss_function(self, forward_ret, labels=None):
         (x_orig, actions, rewards, done, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar,
-         qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, q1, q2) = forward_ret
+         qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, pd_g2_z2_mu, pd_g2_z2_logvar,
+         q1, q2) = forward_ret
 
         # replicate x multiple times
         x = x_orig.flatten(2, -1)
@@ -522,7 +540,12 @@ class GymTDQVAE(BaseGymTDVAE):
         if self.rl:
             # Note: x[t], rewards[t] is a result of actions[t]
             # Q(s[t], a[t+1]) = r[t+1] + γ max_a Q(s[t+1], a)
-            is_weight = labels
+            returns, is_weight = labels
+
+            # use pd_g2_z2_mu, pd_g2_z2_logvar for returns modeling
+            # TODO this will explode when logvar << 0, fix
+            returns_loss = -ops.gaussian_log_prob(pd_g2_z2_mu, pd_g2_z2_logvar, returns[..., None])
+
             # XXX reward clipping hardcoded for Seaquest
             clipped_rewards = (rewards / 10.0).clamp(0.0, 2.0)
 
@@ -564,11 +587,13 @@ class GymTDQVAE(BaseGymTDVAE):
             # errors for prioritized experience replay
             rl_errors = 0.5 * (torch.abs(pred_q1 - target_q1) + torch.abs(pred_q2 - target_q2)).detach()
         else:
+            returns_loss = 0.0
             rl_loss = 0.0
             is_weight = 1.0
             rl_errors = 0.0
 
         # multiply is_weight separately for ease of reporting
+        returns_loss = is_weight * returns_loss
         bce_optimal = is_weight * bce_optimal
         bce_diff = is_weight * bce_diff
         hidden_loss = is_weight * hidden_loss
@@ -578,13 +603,15 @@ class GymTDQVAE(BaseGymTDVAE):
         rl_loss = is_weight * rl_loss
 
         beta = self.beta_decay.get_y(self.get_train_steps())
-        tdvae_loss = bce_diff + hidden_loss + self.d_weight * g_loss + beta * (kl_div_qs_pb + kl_shift_qb_pt)
+        tdvae_loss = bce_diff + returns_loss + hidden_loss + self.d_weight * g_loss + beta * (kl_div_qs_pb + kl_shift_qb_pt)
         loss = self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss
 
-        if self.rl:
-            rl_loss = rl_loss.mean()  # workaround to work with non-RL setting
+        if self.rl:  # workaround to work with non-RL setting
+            rl_loss = rl_loss.mean()
+            returns_loss = returns_loss.mean()
         return collections.OrderedDict([('loss', loss.mean()),
                                         ('bce_diff', bce_diff.mean()),
+                                        ('returns_loss', returns_loss),
                                         ('kl_div_qs_pb', kl_div_qs_pb.mean()),
                                         ('kl_shift_qb_pt', kl_shift_qb_pt.mean()),
                                         ('rl_loss', rl_loss),
