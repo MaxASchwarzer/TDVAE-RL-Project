@@ -14,7 +14,7 @@ class GymRunner(BaseRunner):
     def run_batch(self, batch, train=False):
         data = batch.get_next()
         images, actions, rewards = self.model.prepare_batch(data[:3])
-        report = self.model.run_loss([images, actions, rewards, None, None, None])
+        report = self.model.run_loss([images, actions, rewards, None, None, None, None])
         if train:
             self.model.train(report['loss'], clip_grad_norm=self.flags.grad_norm)
         return report
@@ -24,9 +24,10 @@ class GymRunner(BaseRunner):
         batch = next(self.reader.iter_batches(split, bs, shuffle=True, partial_batching=True, threads=self.threads,
                                               max_batches=1))
         mean, std, imin, imax = batch.img_mean.numpy(), batch.img_std.numpy(), batch.img_true_min, batch.img_true_max
-        images, actions, rewards = batch.get_next()[:3]
-        images, actions, rewards = self.model.prepare_batch([images[:, :t + 2], actions[:, :t + 2], rewards[:, :t + 2]])
-        out = self.model.run_batch([images, t, n, actions, rewards], visualize=True)
+        images, actions, rewards, done = batch.get_next()[:4]
+        images, actions, rewards, done = self.model.prepare_batch([images[:, :t + 2], actions[:, :t + 2],
+                                                                   rewards[:, :t + 2], done[:, :t + 2]])
+        out = self.model.run_batch([images, t, n, actions, rewards, done], visualize=True)
 
         batch = images.cpu().numpy()
         out = out.cpu().numpy().reshape(out.shape[0], out.shape[1], batch.shape[2], batch.shape[3], batch.shape[4])

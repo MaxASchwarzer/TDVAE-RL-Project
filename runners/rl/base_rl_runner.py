@@ -80,15 +80,16 @@ class BaseRLRunner(runner.Runner):
             ratio = int(self.replay_ratio_decay.get_y(self.model.get_train_steps()))
             seq_len = int(self.seq_len_decay.get_y(self.model.get_train_steps()))
             if self.model.get_train_steps() % ratio == 0:
-                obs, actions, rewards = self.emulator_state[:3]
+                obs, actions, rewards, done = self.emulator_state[:4]
                 obs = obs[:, self.simulation_start:]
                 actions = actions[:, self.simulation_start:]
                 rewards = rewards[:, self.simulation_start:]
-                obs, actions, rewards = self.model.prepare_batch([obs, actions, rewards])
+                done = done[:, self.simulation_start:]
+                obs, actions, rewards, done = self.model.prepare_batch([obs, actions, rewards, done])
 
                 self.model.set_train(False)
                 with torch.no_grad():
-                    q = self.model.model.compute_q(obs, actions, rewards)
+                    q = self.model.model.compute_q(obs, actions, rewards, done)
                 self.model.set_train(True)
 
                 selected_actions = torch.argmax(q, dim=1).cpu().numpy()

@@ -14,7 +14,7 @@ class GymRLRunner(BaseRLRunner):
     def run_batch(self, batch, train=False):
         images, actions, rewards, done, t1, t2, returns, is_weight = self.model.prepare_batch(batch[:8])
         replay_indices = batch[8]
-        report = self.model.run_loss([images, actions, rewards, t1, t2, returns], labels=(is_weight, done))
+        report = self.model.run_loss([images, actions, rewards, done, t1, t2, returns], labels=is_weight)
         rl_errors = report.pop('rl_errors', None).cpu().numpy()
         self.reader.update(replay_indices, rl_errors)
         if train:
@@ -28,9 +28,10 @@ class GymRLRunner(BaseRLRunner):
         cond_batch = self.emulator.action_conditional_batch
         mean, std, imin, imax = (cond_batch.img_mean.numpy(), cond_batch.img_std.numpy(), cond_batch.img_true_min,
                                  cond_batch.img_true_max)
-        images, actions, rewards = batch[:3]
-        images, actions, rewards = self.model.prepare_batch([images[:, :t + 2], actions[:, :t + 2], rewards[:, :t + 2]])
-        out = self.model.run_batch([images, t, n, actions, rewards], visualize=True)
+        images, actions, rewards, done = batch[:4]
+        images, actions, rewards, done = self.model.prepare_batch([images[:, :t + 2], actions[:, :t + 2],
+                                                                   rewards[:, :t + 2], done[:, :t + 2]])
+        out = self.model.run_batch([images, t, n, actions, rewards, done], visualize=True)
 
         batch = images.cpu().numpy()
         out = out.cpu().numpy().reshape(out.shape[0], out.shape[1], batch.shape[2], batch.shape[3], batch.shape[4])
