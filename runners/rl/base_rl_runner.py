@@ -56,9 +56,8 @@ class BaseRLRunner(runner.Runner):
                                  max_save_files=2, debug=flags.debug)
 
         # consider history length for simulation to be the expected t seen during TDQVAE training
-        self.history_length = int(np.ceil(0.5 * (flags.seq_len + flags.t_diff_min))) - 1
-        self.simulation_start = flags.seq_len - self.history_length
-        print('* Simulation history length:', self.history_length)
+        self.history_length = int(np.ceil(0.5 * (int(self.seq_len_decay.get_y(0)) + flags.t_diff_min))) - 1
+        print('* Initial simulation history length:', self.history_length)
 
         self.rewards = np.zeros([self.emulator_state[0].size(0)])
 
@@ -79,12 +78,14 @@ class BaseRLRunner(runner.Runner):
 
             ratio = int(self.replay_ratio_decay.get_y(self.model.get_train_steps()))
             seq_len = int(self.seq_len_decay.get_y(self.model.get_train_steps()))
+            self.history_length = int(np.ceil(0.5 * (seq_len + self.flags.t_diff_min))) - 1
+            simulation_start = seq_len - self.history_length
             if self.model.get_train_steps() % ratio == 0:
                 obs, actions, rewards, done = self.emulator_state[:4]
-                obs = obs[:, self.simulation_start:]
-                actions = actions[:, self.simulation_start:]
-                rewards = rewards[:, self.simulation_start:]
-                done = done[:, self.simulation_start:]
+                obs = obs[:, simulation_start:]
+                actions = actions[:, simulation_start:]
+                rewards = rewards[:, simulation_start:]
+                done = done[:, simulation_start:]
                 obs, actions, rewards, done = self.model.prepare_batch([obs, actions, rewards, done])
 
                 self.model.set_train(False)
