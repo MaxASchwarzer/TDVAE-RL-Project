@@ -200,9 +200,9 @@ class ReplayBuffer(Reader):
                 # first, get segments that don't have dones within them (except for final state)
                 done_idx = np.nonzero(bool_done)[0]
                 min_t1s = np.concatenate([[-1], done_idx]) + 1
-                max_t2s = np.concatenate([done_idx, [truncated_len - 1]]) - 1 # t_len-1 to leave room for next reward
+                max_t2s = np.concatenate([done_idx, [truncated_len - 1]]) - 1  # -1 to leave room for next reward
                 max_t1s = max_t2s - t_diff_min
-                t1s_possible = max_t2s - min_t1s - t_diff_min + 1
+                t1s_possible = max_t1s - min_t1s + 1
                 if np.all(t1s_possible < 1):
                     continue  # skip this trajectory
                 possible_combs = np.zeros_like(t1s_possible)
@@ -218,7 +218,7 @@ class ReplayBuffer(Reader):
                 max_t1 = max_t2 - t_diff_min
 
             t1 = np.random.randint(min_t1, max_t1 + 1)
-            t2 = np.random.randint(t1 + t_diff_min, max_t2 + 1)
+            t2 = np.random.randint(t1 + t_diff_min, min(t1 + t_diff_max, max_t2) + 1)
             if t1 + 1 <= t2:
                 clipped_reward = np.clip(reward[t1 + 1:t2 + 1] / 10.0, 0.0, 2.0)
                 returns = (self.gammas[:t2 - t1] * clipped_reward).sum()
