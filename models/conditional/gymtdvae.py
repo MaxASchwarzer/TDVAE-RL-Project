@@ -223,12 +223,12 @@ class TDQVAE(nn.Module):
 
         # Given belief and state at time t2, infer the state at time t1
         self.z1_z2_b = nn.ModuleList([DBlock(b_size + layers * z_size + (z_size if layer < layers - 1 else 0)
-                                             + t_diff_max_poss, layers * b_size, z_size)
+                                             + (t_diff_max_poss - t_diff_min), layers * b_size, z_size)
                                       for layer in range(layers)])
 
         # Given the state at time t1, model state at time t2 through state transition
         self.z2_z1 = nn.ModuleList([DBlock(layers * z_size + action_dim +
-                                           (z_size if layer < layers - 1 else 0) + t_diff_max_poss,
+                                           (z_size if layer < layers - 1 else 0) + (t_diff_max_poss - t_diff_min),
                                            layers * b_size, z_size)
                                     for layer in range(layers)])
 
@@ -238,15 +238,18 @@ class TDQVAE(nn.Module):
 
         # state to Q value per action
         if rl:
-            self.g_z = ReturnsDecoder((layers * z_size * 2) + action_dim + t_diff_max_poss, layers * b_size)
+            self.g_z = ReturnsDecoder((layers * z_size * 2) + action_dim + (t_diff_max_poss - t_diff_min),
+                                      layers * b_size)
             self.q_z = QNetwork(layers * z_size, layers * b_size, action_space)
 
         self.action_embedding = nn.Embedding(action_space, action_dim)
-
-        self.time_encoding = torch.zeros(t_diff_max_poss, t_diff_max_poss)
-        for i in range(t_diff_max_poss):
-            self.time_encoding[i, :i+1] = 1
-        self.time_encoding = nn.Parameter(self.time_encoding.float(), requires_grad=False)
+        self.time_encoding = nn.Embedding(t_diff_max_poss - t_diff_min + 1, t_diff_max_poss - t_diff_min)
+        for param in self.time_encoding.parameters():
+            param.requires_grad = False
+            param.zero_()
+        for i in range(t_diff_max_poss - t_diff_min + 1):
+            self.time_encoding.weight[i, :i] = 1.0
+        self.time_encoding_scale = nn.Parameter(torch.ones(1))
 
     def compute_q(self, x, actions, rewards, done):
         # pre-process image x
@@ -354,7 +357,8 @@ class TDQVAE(nn.Module):
         q1, q2, action_embs, b1, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2, pb_z1_b1_mu, pb_z1_b1_logvar = \
             self.q_and_z_b(x, actions, rewards, done, t1, t2)
 
-        t_encodings = self.time_encoding[t2 - t1 - 1].reshape(-1, self.t_diff_max_poss).contiguous()
+        t_encodings = self.time_encoding(t2 - t1 - self.t_diff_min) * self.time_encoding_scale
+        t_encodings = t_encodings.view(-1, t_encodings.size(-1))
         if action_embs is not None:
             t1_next = t1 + 1
             action_embs = action_embs[None, ...].expand(self.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
@@ -420,8 +424,7 @@ class TDQVAE(nn.Module):
 
         # aggregate the belief b
         b = self.b_rnn(processed_x, done)[:, t]  # size: bs, time, layers, dim
-        t_encodings = self.time_encoding[0].reshape(-1, self.t_diff_max_poss).contiguous()
-        t_encodings = t_encodings.expand(b.shape[0], -1)
+        t_encodings = self.time_encoding(b.new_zeros(b.size(0), dtype=torch.long)) * self.time_encoding_scale
 
         # compute z from b
         p_z_bs = []
