@@ -24,7 +24,22 @@ class BaseRLRunner(runner.Runner):
         if flags.samples_per_seq != 1:
             raise ValueError('! ERROR: samples_per_seq != 1 is not supported for RL')
 
-        self.emulator = GymReader(flags.env, flags.seq_len, flags.batch_size, flags.threads, np.inf)
+        # MiniGrid is an optional dependency, so only import if the user wants it
+        # MiniGrid can be installed by cloning and installing https://github.com/maximecb/gym-minigrid.git
+        if "minigrid" in flags.env.lower():
+            print("Attempting to import MiniGrid environments.")
+            import gym_minigrid
+
+            # Image normalization will crash minigrid, since observations aren't pixels, so force this
+            flags.raw = True
+
+        if "minigrid" in flags.env.lower() or "mujoco" in flags.env.lower():
+            self.visualize = False
+            flags.visualize_every = -1
+        else:
+            self.visualize = True
+
+        self.emulator = GymReader(flags.env, flags.seq_len, flags.batch_size, flags.threads, np.inf, raw=flags.raw)
         self.emulator_iter = self.emulator.iter_batches('train', flags.batch_size, threads=flags.threads)
         self.emulator_state = next(self.emulator_iter).get_next()[:4]
         self.action_space = self.emulator.action_space()
@@ -139,4 +154,5 @@ class BaseRLRunner(runner.Runner):
             self.log_epoch_val_report(epoch_report, self.model.get_train_steps())
 
         self.model.set_train(False)
-        self.post_epoch_visualize(epoch, split)
+        if self.visualize:
+            self.post_epoch_visualize(epoch, split)
