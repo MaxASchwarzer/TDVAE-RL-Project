@@ -191,7 +191,7 @@ class ReplayBuffer(Reader):
                 max_t1 = max_t2 - t_diff_min
 
             t1 = np.random.randint(min_t1, max_t1 + 1)
-            t2 = np.random.randint(t1 + t_diff_min, max_t2 + 1)
+            t2 = np.random.randint(t1 + t_diff_min, min(t1 + t_diff_max, max_t2) + 1)
             if t1 + 1 <= t2:
                 clipped_reward = np.clip(reward[t1 + 1:t2 + 1] / 10.0, 0.0, 2.0)
                 returns = (self.gammas[:t2 - t1] * clipped_reward).sum()
