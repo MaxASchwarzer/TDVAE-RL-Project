@@ -32,121 +32,64 @@ class DBlock(nn.Module):
         return mu, logsigma
 
 
-class PreProcess(nn.Module):
-    """ The default preprocessing layer for 1d inputs.
-    """
-
-    def __init__(self, input_size, processed_x_size):
+class MinigridEncoder(nn.Module):
+    def __init__(self, input_size, d_hidden, d_out, emb_dim=8,
+                 num_objects=11, num_colors=6, num_states=3, num_orientations=4):
         super().__init__()
-        self.fc1 = nn.Linear(input_size, processed_x_size*4)
-        self.fc2 = nn.Linear(processed_x_size*4, processed_x_size)
+        self.color_embedding = nn.Embedding(num_colors, emb_dim)
+        self.object_embedding = nn.Embedding(num_objects, emb_dim)
+        self.state_embedding = nn.Embedding(num_states, emb_dim)
+        self.orientation_embedding = nn.Embedding(num_orientations, emb_dim)
+        self.fc1 = nn.Linear(np.prod(input_size)*emb_dim, d_hidden)
+        self.bn1 = nn.BatchNorm1d(d_hidden)
+        self.fc2 = nn.Linear(d_hidden, d_out)
 
-    def forward(self, input_):
-        t = F.elu(self.fc1(input_))
-        t = F.elu(self.fc2(t))
-        return t
-
-
-class Decoder(nn.Module):
-    """ A decoder layer converting hidden states to observation reconstructions.  Not convolutional; used to
-        reconstruct 1d states only.
-    """
-
-    def __init__(self, z_size, hidden_size, x_size):
-        super().__init__()
-        self.fc1 = nn.Linear(z_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, x_size)
-
-    def forward(self, z):
-        t = F.elu(self.fc1(z))
-        t = F.elu(self.fc2(t))
-        p = self.fc3(t)
-        return p
-
-
-class ConvPreProcess(nn.Module):
-    """ The pre-process layer for image.
-    """
-
-    def __init__(self, input_size, d_hidden, d_out, blocks=None, scale=(2, 2, 2), stride=(2, 2, 2, 2),
-                 l_per_block=(2, 2, 2, 2)):
-        super().__init__()
-
-        d_in = input_size[0]
-        input_size = input_size[1:]
-
-        self.initial = nn.Conv2d(d_in, d_hidden, 7, 1, 3)
-        self.bn1 = nn.BatchNorm2d(d_hidden)
-
-        if blocks is None:
-            scales = np.cumprod([1] + list(scale))
-            blocks = [(l_per_block, int(d_hidden*scale), stride) for l_per_block, scale, stride in
-                      zip(l_per_block, scales, stride)]
-
-        self.resnet = ops.ResNet(d_hidden, blocks) # Will by default downscale to 224//16, 160//16,
-
-        self.final_shape = [int(i//(np.prod(stride))) for i in input_size]
-        self.total_size = np.prod(self.final_shape)*blocks[-1][1]
-
-        self.fc1 = nn.Linear(self.total_size, d_out*4)
-        self.bn2 = nn.BatchNorm1d(d_out*4)
-        self.fc2 = nn.Linear(d_out*4, d_out)
+        self.stack = nn.Sequential(self.fc1, nn.LeakyReLU(0.2), self.bn1, self.fc2, nn.LeakyReLU(0.2))
 
     def forward(self, x):
-        x1 = self.initial(x)
-        x1 = F.elu(x1)
-        x1 = self.bn1(x1)
-        x2 = self.resnet(x1)
-        x3 = self.fc1(x2.flatten(1, -1))
-        x3 = F.elu(x3)
-        x3 = self.bn2(x3)
-        x4 = self.fc2(x3)
-        return x4
+        x = x.long()
+        objects = self.object_embedding(x[:, 0])
+        colors = self.color_embedding(x[:, 1])
+        states = self.state_embedding(x[:, 2])
+        orientation = self.orientation_embedding(x[:, 3])
+        embedded = torch.stack([colors, objects, states, orientation], -1).flatten(1, -1)
+
+        return self.stack(embedded)
 
 
-class ConvDecoder(nn.Module):
-    """ The pre-process layer for image.
-    """
-
-    def __init__(self, d_out, d_hidden, input_size, blocks=None, scale=(2, 2, 2, 2), stride=(2, 2, 2, 2, 2),
-                 l_per_block=(4, 4, 4, 4, 4)):
+class MinigridDecoder(nn.Module):
+    def __init__(self, input_size, z_dim, d_hidden,
+                 num_objects=11, num_colors=6, num_states=3, num_orientations=4):
         super().__init__()
+        self.fc1 = nn.Linear(z_dim, z_dim*4)
+        self.bn1 = nn.BatchNorm1d(z_dim*4)
+        self.relu = nn.LeakyReLU(0.2)
+        self.fc2 = nn.Linear(z_dim*4, np.prod(input_size[1:])*d_hidden)
 
-        d_in = input_size[0]
-        input_size = input_size[1:]
+        self.d_hidden = d_hidden
+        self.final = nn.Linear(d_hidden, num_colors+num_objects+num_states+num_orientations)
 
-        if blocks is None:
-            scales = np.cumprod([1] + list(scale))
-            blocks = [(l_per_block, int(d_hidden*scale), -stride) for l_per_block, scale, stride in
-                      zip(l_per_block, scales, stride)]
+        self.stack = nn.Sequential(self.fc1, nn.LeakyReLU(0.2), self.bn1, self.fc2, nn.LeakyReLU(0.2))
 
-        print(blocks)
-
-        self.final_shape = [int(i//np.prod(stride)) for i in input_size]
-        self.biases = nn.Parameter(torch.zeros(input_size), requires_grad=True)
-        self.total_size = int(np.prod(self.final_shape)*blocks[-1][1])
-        print(self.final_shape, self.total_size)
-        self.fc1 = nn.Linear(d_out, d_out*4)
-        self.bn1 = nn.BatchNorm1d(d_out*4)
-        self.fc2 = nn.Linear(d_out*4, self.total_size)
-        self.bn2 = nn.BatchNorm2d(blocks[-1][1])
-
-        self.resnet = ops.ResNet(blocks[-1][1], list(reversed(blocks)), skip_last_norm=False)
-
-        self.final = nn.Conv2d(d_hidden, d_in, 7, 1, 3)
+        self.num_objects = num_objects
+        self.num_colors = num_colors
+        self.num_states = num_states
+        self.num_orientations = num_orientations
 
     def forward(self, x):
-        x1 = self.fc1(x)
-        x1 = F.elu(x1)
-        x1 = self.bn1(x1)
-        x2 = self.fc2(x1)
-        x2 = F.elu(x2)
-        x2 = x2.view(x.shape[0], x2.shape[1]//np.prod(self.final_shape), self.final_shape[0], self.final_shape[1])
-        x2 = self.bn2(x2)
-        x3 = self.resnet(x2)
-        x4 = self.final(x3)
-        return torch.sigmoid(x4.flatten(1, -1))
+        current = self.fc1(x)
+        current = self.relu(current)
+        current = self.bn1(current)
+        large = self.fc2(current)
+        large = self.relu(large)
+
+        reshaped = large.view(x.shape[0], -1, self.d_hidden)
+        output = self.final(reshaped).transpose(-1, -2)
+        object_logits, color_logits, state_logits, orientation_logits = output.split([self.num_objects,
+                                                                                      self.num_colors,
+                                                                                      self.num_states,
+                                                                                      self.num_orientations], 1)
+        return object_logits, color_logits, state_logits, orientation_logits
 
 
 class ReturnsDecoder(nn.Module):
@@ -229,10 +172,7 @@ class TDQVAE(nn.Module):
         self.rl = rl
 
         # Input pre-process layer
-        if len(x_size) > 1:
-            self.process_x = ConvPreProcess(x_size, resnet_hidden_size, processed_x_size)
-        else:
-            self.process_x = PreProcess(x_size, processed_x_size)
+        self.process_x = MinigridEncoder(x_size, resnet_hidden_size, processed_x_size)
 
         # Multilayer LSTM for aggregating belief states
         self.b_rnn = ops.MultilayerLSTM(input_size=processed_x_size+action_dim+1, hidden_size=b_size, layers=layers,
@@ -244,41 +184,37 @@ class TDQVAE(nn.Module):
 
         # Given belief and state at time t2, infer the state at time t1
         self.z1_z2_b = nn.ModuleList([DBlock(b_size + layers * z_size + (z_size if layer < layers - 1 else 0)
-                                             + (t_diff_max_poss - t_diff_min), layers * b_size, z_size)
+                                             + t_diff_max_poss, layers * b_size, z_size)
                                       for layer in range(layers)])
 
         # Given the state at time t1, model state at time t2 through state transition
         self.z2_z1 = nn.ModuleList([DBlock(layers * z_size + action_dim +
-                                           (z_size if layer < layers - 1 else 0) + (t_diff_max_poss - t_diff_min),
+                                           (z_size if layer < layers - 1 else 0) + t_diff_max_poss,
                                            layers * b_size, z_size)
                                     for layer in range(layers)])
 
         # state to observation
-        # self.x_z = ConvDecoder(layers * z_size, resnet_hidden_size, x_size)
-        self.x_z = SAGANGenerator(x_size, z_dim=layers * z_size, d_hidden=resnet_hidden_size)
+        self.x_z = MinigridDecoder(x_size, z_dim=layers * z_size, d_hidden=resnet_hidden_size)
 
         # state to Q value per action
         if rl:
-            self.g_z = ReturnsDecoder((layers * z_size * 2) + action_dim + (t_diff_max_poss - t_diff_min),
-                                      layers * b_size)
+            self.g_z = ReturnsDecoder((layers * z_size * 2) + action_dim + t_diff_max_poss, layers * b_size)
             self.q_z = QNetwork(layers * z_size, layers * b_size, action_space)
 
         self.action_embedding = nn.Embedding(action_space, action_dim)
-        self.time_encoding = nn.Embedding(t_diff_max_poss - t_diff_min + 1, t_diff_max_poss - t_diff_min)
-        for param in self.time_encoding.parameters():
-            param.requires_grad = False
-            param.zero_()
-        for i in range(t_diff_max_poss - t_diff_min + 1):
-            self.time_encoding.weight[i, :i] = 1.0
-        self.time_encoding_scale = nn.Parameter(torch.ones(1))
+
+        self.time_encoding = torch.zeros(t_diff_max_poss, t_diff_max_poss)
+        for i in range(t_diff_max_poss):
+            self.time_encoding[i, :i+1] = 1
+        self.time_encoding = nn.Parameter(self.time_encoding.float(), requires_grad=False)
 
     def compute_q(self, x, actions, rewards, done):
         # pre-process image x
-        im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
+        im_x = x.flatten(0, 1)
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         if actions is not None:
-            rewards = (rewards[..., None] / 10.0).clamp(0.0, 2.0)
+            rewards = rewards[..., None]
             action_embs = self.action_embedding(actions)
             processed_x = torch.cat([processed_x, action_embs, rewards], -1)
 
@@ -378,8 +314,7 @@ class TDQVAE(nn.Module):
         q1, q2, action_embs, b1, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2, pb_z1_b1_mu, pb_z1_b1_logvar = \
             self.q_and_z_b(x, actions, rewards, done, t1, t2)
 
-        t_encodings = self.time_encoding(t2 - t1 - self.t_diff_min) * self.time_encoding_scale
-        t_encodings = t_encodings.view(-1, t_encodings.size(-1))
+        t_encodings = self.time_encoding[t2 - t1 - 1].reshape(-1, self.t_diff_max_poss).contiguous()
         if action_embs is not None:
             t1_next = t1 + 1
             action_embs = action_embs[None, ...].expand(self.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
@@ -428,8 +363,9 @@ class TDQVAE(nn.Module):
         else:
             pd_g2_z2_mu = None
 
-        return (x, actions, rewards, done, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar,
-                qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, pd_g2_z2_mu, q1, q2)
+        return (x, actions, rewards, done, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu,
+                pb_z1_b1_logvar, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2,
+                pd_g2_z2_mu, q1, q2)
 
     def visualize(self, x, t, n, actions, rewards, done):
         # pre-process image x
@@ -445,7 +381,8 @@ class TDQVAE(nn.Module):
 
         # aggregate the belief b
         b = self.b_rnn(processed_x, done)[:, t]  # size: bs, time, layers, dim
-        t_encodings = self.time_encoding(b.new_zeros(b.size(0), dtype=torch.long)) * self.time_encoding_scale
+        t_encodings = self.time_encoding[0].reshape(-1, self.t_diff_max_poss).contiguous()
+        t_encodings = t_encodings.expand(b.shape[0], -1)
 
         # compute z from b
         p_z_bs = []
@@ -483,7 +420,7 @@ class TDQVAE(nn.Module):
         return torch.stack(rollout_x, dim=1)
 
 
-class GymTDQVAE(BaseGymTDVAE):
+class MinigridTDQVAE(BaseGymTDVAE):
 
     def __init__(self, flags, model=None, action_space=20, rl=False, replay_buffer=None, *args, **kwargs):
         self.rl = rl
@@ -500,7 +437,7 @@ class GymTDQVAE(BaseGymTDVAE):
             t_diff_max_poss = flags.t_diff_max_poss
 
         if model is None:
-            model_args = [(3, 80, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
+            model_args = [(4, 7, 7), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
                           flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, t_diff_max_poss]
             model_kwargs = {'action_space': action_space}
             if rl:
@@ -531,24 +468,27 @@ class GymTDQVAE(BaseGymTDVAE):
     def update_target_net(self):
         self.target_net.load_state_dict(self.model.state_dict())
 
-    def loss_function(self, forward_ret, labels=None, loss=F.binary_cross_entropy):
-        (x_orig, actions, rewards, done, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar,
-         qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, pd_g2_z2_mu, q1,
-         q2) = forward_ret
+    def loss_function(self, forward_ret, labels=None):
+        (x_orig, actions, rewards, done, t1, t2, qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu,
+         pb_z1_b1_logvar, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2, pt_z2_z1_mu, pt_z2_z1_logvar, pd_x2_z2, pd_g2_z2_mu,
+         q1, q2) = forward_ret
 
         # replicate x multiple times
-        x = x_orig.flatten(2, -1)
-        x = x[None, ...].expand(self.flags.samples_per_seq, -1, -1, -1)  # size: copy, bs, time, dim
-        x2 = torch.gather(x, 2, t2[..., None, None].expand(-1, -1, -1, x.size(3))).view(-1, x.size(3))
+        x = x_orig.flatten(3, -1)
+        x = x[None, ...].expand(self.flags.samples_per_seq, -1, -1, -1, -1)  # size: copy, bs, time, dim
+        x2 = torch.gather(x, 2, t2[..., None, None, None].expand(-1, -1, -1, x.size(3), x.size(4)))
+        x2 = x2.long().view(-1, x.size(3), x.size(4))
         kl_div_qs_pb = ops.kl_div_gaussian(qs_z1_z2_b1_mu, qs_z1_z2_b1_logvar, pb_z1_b1_mu, pb_z1_b1_logvar)
 
         kl_shift_qb_pt = (ops.gaussian_log_prob(qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2) -
                           ops.gaussian_log_prob(pt_z2_z1_mu, pt_z2_z1_logvar, qb_z2_b2))
 
-        pd_x2_z2 = pd_x2_z2.flatten(1, -1)
-        bce = loss(pd_x2_z2, x2, reduction='none').sum(dim=1)
-        bce_optimal = loss(x2, x2, reduction='none').sum(dim=1)
-        bce_diff = bce - bce_optimal
+        ce_1 = F.cross_entropy(pd_x2_z2[0], x2[:, 0])
+        ce_2 = F.cross_entropy(pd_x2_z2[1], x2[:, 1])
+        ce_3 = F.cross_entropy(pd_x2_z2[2], x2[:, 2])
+        obs_ce = F.cross_entropy(pd_x2_z2[3], x2[:, 3])/(x_orig.shape[1])
+
+        total_ce = ce_1 + ce_2 + ce_3 + obs_ce
 
         if self.adversarial and self.is_training():
             r_in = x2.view(x2.shape[0], x.shape[2], x.shape[3], x.shape[4])
@@ -620,8 +560,7 @@ class GymTDQVAE(BaseGymTDVAE):
 
         # multiply is_weight separately for ease of reporting
         returns_loss = is_weight * returns_loss
-        bce_optimal = is_weight * bce_optimal
-        bce_diff = is_weight * bce_diff
+        total_ce = is_weight * total_ce
         hidden_loss = is_weight * hidden_loss
         g_loss = is_weight * g_loss
         kl_div_qs_pb = is_weight * kl_div_qs_pb
@@ -629,7 +568,7 @@ class GymTDQVAE(BaseGymTDVAE):
         rl_loss = is_weight * rl_loss
 
         beta = self.beta_decay.get_y(self.get_train_steps())
-        tdvae_loss = bce_diff + returns_loss + hidden_loss + self.d_weight * g_loss + beta * (kl_div_qs_pb +
+        tdvae_loss = total_ce + returns_loss + hidden_loss + self.d_weight * g_loss + beta * (kl_div_qs_pb +
                                                                                               kl_shift_qb_pt)
         loss = self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss
 
@@ -637,12 +576,12 @@ class GymTDQVAE(BaseGymTDVAE):
             rl_loss = rl_loss.mean()
             returns_loss = returns_loss.mean()
         return collections.OrderedDict([('loss', loss.mean()),
-                                        ('bce_diff', bce_diff.mean()),
+                                        ('total_ce', total_ce.mean()),
                                         ('returns_loss', returns_loss),
                                         ('kl_div_qs_pb', kl_div_qs_pb.mean()),
                                         ('kl_shift_qb_pt', kl_shift_qb_pt.mean()),
                                         ('rl_loss', rl_loss),
-                                        ('bce_optimal', bce_optimal.mean()),
+                                        # ('bce_optimal', bce_optimal.mean()),
                                         ('rl_errors', rl_errors)])
 
     def initialize(self, load_file):

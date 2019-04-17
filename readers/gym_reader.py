@@ -3,6 +3,7 @@ from multiprocessing import Process, Pipe
 import pickle
 
 import gym
+import gym_minigrid
 import gym_vecenv as vecenv
 import numpy as np
 import torch
@@ -13,8 +14,11 @@ from pylego.reader import Reader
 
 
 def make_env(env_name, frameskip=4, steps=1000000, secs=100000):
-    env = gym.make(env_name)
-    env.env.frameskip = frameskip
+    if "minigrid" in env_name.lower():
+        env = gym.make(env_name)
+    else:
+        env = gym.make(env_name)
+        env.env.frameskip = frameskip
     env._max_episode_steps = steps
     env._max_episode_seconds = secs
     return env
@@ -25,12 +29,20 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
     def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=4, raw=False,
                  data_dir='data'):
         self.env_name = env
+        if "minigrid" in self.env_name.lower():
+            self.minigrid = True
+        elif "mujoco" in self.env_name.lower():
+            self.mujoco = True
+        else:
+            self.minigrid = False
+            self.mujoco = False
         self.seq_len = seq_len
         self.batch_size = batch_size
         self.raw = raw  # return raw images
 
         fn = lambda: make_env(env, frameskip=inner_frameskip)
         env_fcns = [fn for i in range(batch_size)]
+        self.env_name = env
         self.env = SubprocVecEnv(env_fcns, n_workers=threads)
         self.env.reset()
         self.buffers = [deque(maxlen=seq_len) for i in range(6)]
@@ -56,26 +68,41 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
         self.env.step_async(in_actions)
         orig_obs, rewards, done, meta = self.env.step_wait()
-        orig_obs = np.transpose(orig_obs, axes=(0, 3, 1, 2))  # original unnormalized images
-        obs = torch.tensor(orig_obs).float() / 255
 
-        if not self.raw:
-            obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
-            obs = (obs - self.img_min) / (self.img_max - self.img_min)
+        if self.minigrid:
+            im = np.array([obs["image"] for obs in orig_obs])
+            dir = np.array([obs["direction"] for obs in orig_obs])
+            dir_flat = np.zeros((im.shape[0], im.shape[1], im.shape[2], 1)) + dir[:, None, None, None]
+            obs = np.concatenate([im, dir_flat], axis=-1)
+            obs = np.transpose(obs, axes=(0, 3, 1, 2))
+            obs = torch.tensor(obs)
 
-            h, w = obs.size()[2:]
-            obs = obs[:, :, self.img_hcrop_top:h-self.img_hcrop_bottom, self.img_vcrop_left:w-self.img_vcrop_right]
-            h, w = obs.size()[2:]
-            pad_h, pad_w = 160 - h, 160 - w
-            if self.downsample:
-                obs = F.avg_pool2d(obs, (2, 2,), stride=2)
-                pad_h = np.ceil(pad_h / 2.0)
-                pad_w = np.ceil(pad_w / 2.0)
-            pad_h /= 2.0
-            pad_w /= 2.0
+        elif self.mujoco:
+            obs = np.stack(orig_obs, 0)
+            obs = torch.tensor(obs)
 
-            obs = F.pad(obs, (int(np.ceil(pad_w)), int(np.floor(pad_w)), int(np.ceil(pad_h)), int(np.floor(pad_h))),
-                        mode="constant", value=0.5)
+        else:
+            orig_obs = np.stack(orig_obs, 0)
+            orig_obs = np.transpose(orig_obs, axes=(0, 3, 1, 2))  # original unnormalized images
+            obs = torch.tensor(orig_obs).float() / 255
+
+            if not self.raw:
+                obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
+                obs = (obs - self.img_min) / (self.img_max - self.img_min)
+
+                h, w = obs.size()[2:]
+                obs = obs[:, :, self.img_hcrop_top:h-self.img_hcrop_bottom, self.img_vcrop_left:w-self.img_vcrop_right]
+                h, w = obs.size()[2:]
+                pad_h, pad_w = 160 - h, 160 - w
+                if self.downsample:
+                    obs = F.avg_pool2d(obs, (2, 2,), stride=2)
+                    pad_h = np.ceil(pad_h / 2.0)
+                    pad_w = np.ceil(pad_w / 2.0)
+                pad_h /= 2.0
+                pad_w /= 2.0
+
+                obs = F.pad(obs, (int(np.ceil(pad_w)), int(np.floor(pad_w)), int(np.ceil(pad_h)), int(np.floor(pad_h))),
+                            mode="constant", value=0.5)
 
         for i, val in enumerate([obs, in_actions, rewards, done, meta, orig_obs]):
             self.buffers[i].append(val)
@@ -285,15 +312,13 @@ def worker(remote, parent_remote, env_fn_wrappers):
                 rewards.append(reward)
                 dones.append(done)
                 infos.append(info)
-            remote.send((np.array(obs, dtype=np.float32), np.array(rewards, dtype=np.float32),
+            remote.send((obs, np.array(rewards, dtype=np.float32),
                          np.array(dones, dtype=np.float32), np.array(infos)))
         elif cmd == 'reset':
             ob = [env.reset() for env in envs]
-            ob = np.stack(ob, 0)
             remote.send(ob)
         elif cmd == 'reset_task':
             ob = [env.reset_task() for env in envs]
-            ob = np.stack(ob, 0)
             remote.send(ob)
         elif cmd == 'close':
             remote.close()
@@ -340,18 +365,19 @@ class SubprocVecEnv(vecenv.vec_env.VecEnv):
     def step_wait(self):
         results = [remote.recv() for remote in self.remotes]
         self.waiting = False
-        obs, rews, dones, infos = zip(*results)
-        return np.concatenate(obs, 0), np.concatenate(rews, 0), np.concatenate(dones, 0), infos
+        obs_lists, rews, dones, infos = zip(*results)
+        obs = [obs for ls in obs_lists for obs in ls]
+        return obs, np.concatenate(rews, 0), np.concatenate(dones, 0), infos
 
     def reset(self):
         for remote in self.remotes:
             remote.send(('reset', None))
-        return np.concatenate([remote.recv() for remote in self.remotes], 0)
+        return [obs for ls in [remote.recv() for remote in self.remotes] for obs in ls]
 
     def reset_task(self):
         for remote in self.remotes:
             remote.send(('reset_task', None))
-        return np.concatenate([remote.recv() for remote in self.remotes], 0)
+        return [obs for ls in [remote.recv() for remote in self.remotes] for obs in ls]
 
     def close(self):
         if self.closed:
