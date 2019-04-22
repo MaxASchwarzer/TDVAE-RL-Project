@@ -3,7 +3,6 @@ from multiprocessing import Process, Pipe
 import pickle
 
 import gym
-import gym_minigrid
 import gym_vecenv as vecenv
 import numpy as np
 import torch
