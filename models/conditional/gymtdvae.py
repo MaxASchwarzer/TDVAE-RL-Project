@@ -572,8 +572,8 @@ class GymTDQVAE(BaseGymTDVAE):
             # use pd_g2_z2_mu for returns modeling
             returns_loss = (pd_g2_z2_mu.squeeze(1) - (10.0 * returns)) ** 2
 
-            # XXX reward clipping hardcoded for Seaquest
-            clipped_rewards = (rewards / 10.0).clamp(0.0, 2.0)
+            # reward clipping for Atari
+            clipped_rewards = rewards.clamp(-1.0, 1.0)
 
             t1_next = t1 + 1
             t2_next = t2 + 1

@@ -160,7 +160,7 @@ class ReplayBuffer(Reader):
                  clip_errors=2.0, skip_init=False,):
         self.t_diff_min = t_diff_min
         self.t_diff_max = t_diff_max
-        self.clip_errors = clip_errors  # XXX default value ideal only for Seaquest
+        self.clip_errors = clip_errors  # default value ideal for Atari
         self.buffer = misc.SumTree(buffer_size)
         self.beta = 0.4
         self.beta_increment_per_sampling = 0.001
@@ -220,7 +220,7 @@ class ReplayBuffer(Reader):
             t1 = np.random.randint(min_t1, max_t1 + 1)
             t2 = np.random.randint(t1 + t_diff_min, min(t1 + t_diff_max, max_t2) + 1)
             if t1 + 1 <= t2:
-                clipped_reward = np.clip(reward[t1 + 1:t2 + 1] / 10.0, 0.0, 2.0)
+                clipped_reward = np.clip(reward[t1 + 1:t2 + 1], -1.0, 1.0)
                 returns = (self.gammas[:t2 - t1] * clipped_reward).sum()
             else:
                 returns = 0.0
