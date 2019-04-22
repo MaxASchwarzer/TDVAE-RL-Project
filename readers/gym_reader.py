@@ -161,6 +161,7 @@ class ReplayBuffer(Reader):
         self.t_diff_max = t_diff_max
         self.clip_errors = clip_errors  # default value ideal for Atari
         self.buffer = misc.SumTree(buffer_size)
+        self.cache = {}  # TODO use
         self.beta = 0.4
         self.beta_increment_per_sampling = 0.001
         self.e = 0.01
@@ -180,6 +181,15 @@ class ReplayBuffer(Reader):
                         break
             print('* Replay buffer initialized')
         super().__init__({'train': iters_per_epoch})
+
+    def add_cached(self, priority, data):
+        data = ((data[0] * 255.0).numpy().astype(np.uint8),) + data[1:]
+        self.buffer.add(priority, data)
+
+    def get_cached(self, s):
+        (idx, p, data) = self.buffer.get(s)
+        data = (torch.from_numpy((data[0] / 255.0).astype(np.float32)),) + data[1:]
+        return idx, p, data
 
     def calc_priority(self, error):
         return np.minimum(self.clip_errors, error + self.e) ** self.a
@@ -223,7 +233,7 @@ class ReplayBuffer(Reader):
                 returns = (self.gammas[:t2 - t1] * clipped_reward).sum()
             else:
                 returns = 0.0
-            self.buffer.add(priority, (ob, action, reward, done, t1, t2, returns))
+            self.add_cached(priority, (ob, action, reward, done, t1, t2, returns))
 
     def update(self, indices, errors):
         priorities = self.calc_priority(errors)
@@ -231,11 +241,11 @@ class ReplayBuffer(Reader):
             self.buffer.update(idx, priority)
 
     def get_buffer(self):
-        return self.buffer, self.beta
+        return self.buffer, self.cache, self.beta
 
     def load_buffer(self, buffer):
         print('* Loading external replay buffer')
-        self.buffer, self.beta = buffer
+        self.buffer, self.cache, self.beta = buffer
 
     def sample(self, n):
         batch = []
@@ -247,7 +257,7 @@ class ReplayBuffer(Reader):
             a = segment * i
             b = segment * (i + 1)
             s = np.random.uniform(a, b)
-            (idx, p, data) = self.buffer.get(s)
+            idx, p, data = self.get_cached(s)
             priorities.append(p)
             batch.append(data)
             idxs.append(idx)
