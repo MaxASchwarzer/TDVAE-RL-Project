@@ -35,8 +35,8 @@ if __name__ == '__main__':
     arg(parser, 'beta_initial', type=float, default=1, help='initial beta (for curriculum).  Default of '
                                                             '1 disables this feature.')
     arg(parser, 'd_weight', type=float, default=10, help='Parameter for discriminator loss scale')
-    arg(parser, 'tdvae_weight', type=float, default=1.0, help='Parameter for TDVAE loss scale')
-    arg(parser, 'rl_weight', type=float, default=25.0, help='Parameter for DQN loss scale')
+    arg(parser, 'tdvae_weight', type=float, default=1e-4, help='Parameter for TDVAE loss scale')
+    arg(parser, 'rl_weight', type=float, default=1.0, help='Parameter for DQN loss scale')
     arg(parser, 'grad_norm', type=float, default=5.0, help='gradient norm clipping (-1 to disable)')
     arg(parser, 'adversarial', type=bool, default=False, help='Use an auxiliary adversarial loss on reconstructions')
     arg(parser, 'rl', type=bool, default=True, help='Do RL')
@@ -72,7 +72,7 @@ if __name__ == '__main__':
                                                               'Default of -1 uses seq_len - 1 instead.')  # TODO remove
     arg(parser, 'epochs', type=int, default=50000, help='no. of training epochs')
     arg(parser, 'max_batches', type=int, default=-1, help='max batches per split (if not -1, for debugging)')
-    arg(parser, 'print_every', type=int, default=10, help='print losses every these many steps')
+    arg(parser, 'print_every', type=int, default=50, help='print losses every these many steps')
     arg(parser, 'gpus', type=str, default='0')
     arg(parser, 'threads', type=int, default=-1, help='data processing threads (-1 to determine from CPUs)')
     arg(parser, 'debug', type=bool, default=False, help='run model in debug mode')
