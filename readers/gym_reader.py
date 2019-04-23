@@ -2,6 +2,7 @@ from collections import deque
 from multiprocessing import Process, Pipe
 import pickle
 
+from baselines.common import atari_wrappers as atari
 import gym
 import gym_vecenv as vecenv
 import numpy as np
@@ -18,6 +19,9 @@ def make_env(env_name, frameskip=4, steps=1000000, secs=100000):
     else:
         env = gym.make(env_name)
         env.env.frameskip = frameskip
+        env = atari.EpisodicLifeEnv(env)
+        if 'FIRE' in env.unwrapped.get_action_meanings():
+            env = atari.FireResetEnv(env)
     env._max_episode_steps = steps
     env._max_episode_seconds = secs
     return env
@@ -210,6 +214,8 @@ class ReplayBuffer(Reader):
 
     def get_cached(self, s):
         (idx, p, idx_data) = self.buffer.get(s)
+        if not isinstance(idx_data, tuple):
+            return idx, p, None
         ob = np.stack([self.cache[i][0] for i in idx_data[0]])
         data = (torch.from_numpy((ob / 255.0).astype(np.float32)),) + idx_data[1:]
         return idx, p, data
@@ -278,10 +284,16 @@ class ReplayBuffer(Reader):
         priorities = []
         self.beta = np.min([1., self.beta + self.beta_increment_per_sampling])
         for i in range(n):
-            a = segment * i
-            b = segment * (i + 1)
-            s = np.random.uniform(a, b)
-            idx, p, data = self.get_cached(s)
+            fail = 0
+            while True:
+                a = segment * ((i + fail) % n)
+                b = segment * (((i + fail) % n) + 1)
+                s = np.random.uniform(a, b)
+                idx, p, data = self.get_cached(s)
+                if data is not None:
+                    break
+                else:
+                    fail += 1
             priorities.append(p)
             batch.append(data)
             idxs.append(idx)
@@ -339,12 +351,12 @@ def worker(remote, parent_remote, env_fn_wrappers):
             obs, rewards, dones, infos = [], [], [], []
             for env, action in zip(envs, data):
                 ob, reward, done, info = env.step(action)
-                if np.any(done):
-                    ob = env.reset()
                 obs.append(ob)
                 rewards.append(reward)
                 dones.append(done)
                 infos.append(info)
+                if np.any(done):
+                    ob = env.reset()
             remote.send((obs, np.array(rewards, dtype=np.float32),
                          np.array(dones, dtype=np.float32), np.array(infos)))
         elif cmd == 'reset':
