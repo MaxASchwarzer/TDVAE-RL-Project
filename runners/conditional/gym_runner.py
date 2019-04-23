@@ -20,16 +20,15 @@ class GymRunner(BaseRunner):
         return report
 
     def _visualize_split(self, split, t, n):
-        bs = min(self.batch_size, 15)
-        batch = next(self.reader.iter_batches(split, bs, shuffle=True, partial_batching=True, threads=self.threads,
-                                              max_batches=1))
+        batch = next(self.reader.iter_batches(split, self.batch_size, shuffle=True, partial_batching=True,
+                                              threads=self.threads, max_batches=1))
         mean, std, imin, imax = batch.img_mean.numpy(), batch.img_std.numpy(), batch.img_true_min, batch.img_true_max
         images, actions, rewards, done = batch.get_next()[:4]
-        images, actions, rewards, done = self.model.prepare_batch([images[:, :t + 2], actions[:, :t + 2],
-                                                                   rewards[:, :t + 2], done[:, :t + 2]])
+        images, actions, rewards, done = self.model.prepare_batch([images[:, :t + n], actions[:, :t + n],
+                                                                   rewards[:, :t + n], done[:, :t + n]])
         out = self.model.run_batch([images, t, n, actions, rewards, done], visualize=True)
 
-        batch = images.cpu().numpy()
+        batch = images.cpu().numpy()[:, :t]
         out = out.cpu().numpy().reshape(out.shape[0], out.shape[1], batch.shape[2], batch.shape[3], batch.shape[4])
         vis_data = np.concatenate([batch, out], axis=1)
         bs, seq_len = vis_data.shape[:2]
@@ -41,7 +40,7 @@ class GymRunner(BaseRunner):
         print('* Visualizing', split)
         length = min(10, self.flags.seq_len - 1)
         n = min(5, self.flags.seq_len - length)
-        vis_data, aspect = self._visualize_split(split, length, n)  # FIXME n is 1
+        vis_data, aspect = self._visualize_split(split, length, 5)
         fname = self.flags.log_dir + '/{}'.format(split) + '%03d.png' % epoch
         misc.save_comparison_grid(fname, vis_data, rows_cols=aspect, border_shade=1.0, retain_sequence=True)
         print('* Visualizations saved to', fname)

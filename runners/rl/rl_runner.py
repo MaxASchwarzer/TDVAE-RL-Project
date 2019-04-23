@@ -29,11 +29,11 @@ class GymRLRunner(BaseRLRunner):
         mean, std, imin, imax = (cond_batch.img_mean.numpy(), cond_batch.img_std.numpy(), cond_batch.img_true_min,
                                  cond_batch.img_true_max)
         images, actions, rewards, done = batch[:4]
-        images, actions, rewards, done = self.model.prepare_batch([images[:, :t + 2], actions[:, :t + 2],
-                                                                   rewards[:, :t + 2], done[:, :t + 2]])
+        images, actions, rewards, done = self.model.prepare_batch([images[:, :t + n], actions[:, :t + n],
+                                                                   rewards[:, :t + n], done[:, :t + n]])
         out = self.model.run_batch([images, t, n, actions, rewards, done], visualize=True)
 
-        batch = images.cpu().numpy()
+        batch = images.cpu().numpy()[:, :t]
         out = out.cpu().numpy().reshape(out.shape[0], out.shape[1], batch.shape[2], batch.shape[3], batch.shape[4])
         vis_data = np.concatenate([batch, out], axis=1)
         bs, seq_len = vis_data.shape[:2]
@@ -43,7 +43,7 @@ class GymRLRunner(BaseRLRunner):
 
     def post_epoch_visualize(self, epoch, split):
         print('* Visualizing', split)
-        vis_data, aspect = self._visualize_split(split, self.history_length, 1)  # FIXME n is 1
+        vis_data, aspect = self._visualize_split(split, self.history_length, 5)
         fname = self.flags.log_dir + '/{}'.format(split) + '%03d.png' % epoch
         misc.save_comparison_grid(fname, vis_data, rows_cols=aspect, border_shade=1.0, retain_sequence=True)
         print('* Visualizations saved to', fname)

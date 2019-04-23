@@ -9,13 +9,13 @@ from pylego import misc
 from readers.gym_reader import GymReader, ReplayBuffer
 
 
-GAME = 'Seaquest-v0'
+GAME = 'Pong-v0'
 DATA_DIR = 'data/' + GAME
 
 def get_batches(batches_fname):
     if not Path(batches_fname).is_file():
         emulator = GymReader(GAME, 2, 16, 6, np.inf, raw=True)
-        reader = ReplayBuffer(emulator, 5000, 512, 0, 0, 0.99)
+        reader = ReplayBuffer(emulator, 5000, 5000, 512, 0, 0, 0.99)
 
         batches = []
         print('* Collecting batches')
@@ -43,23 +43,25 @@ if __name__ == '__main__':
     batches = get_batches(DATA_DIR + '/norm_batches.pk')
     misc.save_comparison_grid('example1.png', batches[:16], border_shade=0.8)
     h, w = batches.shape[2:]
-    crop_top, crop_bottom, crop_left, crop_right = 46, 35, 8, 0
+    crop_top, crop_bottom, crop_left, crop_right = 34, 16, 0, 0
+    print(batches.shape)
     batches = batches[:, :, crop_top:h-crop_bottom, crop_left:w-crop_right]
-    flat_batches = batches.transpose(1, 0, 2, 3).reshape(3, -1)
+    print(batches.shape)
+    flat_batches = batches.transpose(1, 0, 2, 3).reshape(batches.shape[1], -1)
     mean = flat_batches.mean(axis=1)[None, :, None, None]
     std = flat_batches.std(axis=1)[None, :, None, None]
     batches -= mean
     batches /= std
-    # batches = batches.mean(axis=1, keepdims=True)  # greyscale
+    batches = batches.mean(axis=1, keepdims=True)  # greyscale
     true_min = batches.min()
     true_max = batches.max()
     print(true_min, true_max)
-    bmin = np.percentile(batches, 2)
-    bmax = np.percentile(batches, 98)
+    bmin = true_min  # np.percentile(batches, 0)
+    bmax = true_max  # np.percentile(batches, 99.9)
     print(bmin, bmax)
     batches = np.clip(batches, bmin, bmax)
-    batches -= batches.min()
-    batches /= batches.max()
+    batches -= bmin
+    batches /= bmax - bmin
     misc.save_comparison_grid('example2.png', batches[:16], border_shade=0.8)
 
     with open(DATA_DIR + '/img_stats.pk', 'wb') as f:

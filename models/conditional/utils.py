@@ -181,7 +181,7 @@ class SAGANGenerator(nn.Module):
                                        (x_strides[-1]//2, y_strides[-1]//2)))
         last.append(nn.BatchNorm2d(int(curr_dim)))
         last.append(nn.ReLU())
-        last.append(nn.Conv2d(curr_dim, 3, 3, 1, 1))
+        last.append(nn.Conv2d(curr_dim, image_size[0], 3, 1, 1))
         last.append(nn.Sigmoid())
         self.last = nn.Sequential(*last)
 

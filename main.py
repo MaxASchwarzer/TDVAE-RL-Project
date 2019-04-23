@@ -15,17 +15,17 @@ if __name__ == '__main__':
     arg(parser, 'cuda', type=bool, default=True, help='enable CUDA')
     arg(parser, 'load_file', type=str, default='', help='file to load model from')
     arg(parser, 'save_file', type=str, default='model.dat', help='model save file')
-    arg(parser, 'save_every', type=int, default=2500, help='save every these many global steps (-1 to disable saving)')
+    arg(parser, 'save_every', type=int, default=5000, help='save every these many global steps (-1 to disable saving)')
     arg(parser, 'data_path', type=str, default='data/MNIST')
     arg(parser, 'data', type=str, default='gym', help="Data source to use.  Set to gym and set env flag for gym.")
     arg(parser, 'raw', type=bool, default=False, help="Whether or not to preprocess inputs.  Set to true if not"
                                                       " using image inputs.")
-    arg(parser, 'env', type=str, default='Seaquest-v0', help="Gym environment to use (if data=gym)")
+    arg(parser, 'env', type=str, default='Pong-v0', help="Gym environment to use (if data=gym)")
     arg(parser, 'iters_per_epoch', type=int, default=500, help="Number of batches per epoch if in Gym.")
     arg(parser, 'logs_path', type=str, default='logs')
     arg(parser, 'force_logs', type=bool, default=False)
     arg(parser, 'optimizer', type=str, default='adam', help='one of: adam')
-    arg(parser, 'learning_rate', type=float, default=5e-4, help='-1 to use model default')
+    arg(parser, 'learning_rate', type=float, default=1e-4, help='-1 to use model default')
     arg(parser, 'd_lr', type=float, default=1e-3, help='LR for discriminator, if in use')
     arg(parser, 'd_steps', type=int, default=1, help='Disc steps per Gen step.')
     arg(parser, 'd_start', type=int, default=5, help='Epochs before generator starts to train on disc. loss.')
@@ -46,14 +46,15 @@ if __name__ == '__main__':
     arg(parser, 'seq_len_decay_end', type=int, default=1, help='step at which seq len should be at maximum')
     arg(parser, 'seq_len_initial', type=int, default=-1, help='initial sequence length (for curriculum).  Default of '
                                                               '-1 disables this feature.')
-    arg(parser, 'batch_size', type=int, default=64, help='batch size')
-    arg(parser, 'replay_size', type=int, default=7500, help='Experience replay buffer size')
-    arg(parser, 'freeze_every', type=int, default=2500, help='Freeze a Q network every this many steps')
+    arg(parser, 'batch_size', type=int, default=32, help='batch size')
+    arg(parser, 'replay_size', type=int, default=100000, help='Experience replay buffer size')
+    arg(parser, 'initial_replay_size', type=int, default=10000, help='Initial experience replay buffer size')
+    arg(parser, 'freeze_every', type=int, default=1000, help='Freeze a Q network every this many steps')
     arg(parser, 'samples_per_seq', type=int, default=1, help='(t1, t2) samples per input sequence')  # TODO remove
     arg(parser, 'discount_factor', type=float, default=0.99, help='RL discount factor (aka gamma)')
-    arg(parser, 'eps_decay_start', type=int, default=2500, help='Iteration to start decaying epsilon at')
+    arg(parser, 'eps_decay_start', type=int, default=0, help='Iteration to start decaying epsilon at')
     arg(parser, 'eps_decay_end', type=int, default=100000, help='Iteration to stop decaying epsilon at')
-    arg(parser, 'eps_final', type=float, default=0.01, help='Final epsilon for epsilon-greedy')
+    arg(parser, 'eps_final', type=float, default=0.02, help='Final epsilon for epsilon-greedy')
     arg(parser, 'add_replay_every', type=int, default=8, help='Take an action and add to replay buffer every these '
                                                               'many steps (final value if decayed)')
     arg(parser, 'add_every_start', type=int, default=200000, help='Iteration to start decaying add_replay_every at')
@@ -61,11 +62,11 @@ if __name__ == '__main__':
     arg(parser, 'add_every_initial', type=int, default=-1, help='Initial add_replay_every')
     arg(parser, 'h_size', type=int, default=32, help='Base #channels for resnets before downscaling.')
     arg(parser, 'd_size', type=int, default=16, help='Base #channels for discriminator before downscaling.')
-    arg(parser, 'b_size', type=int, default=128, help='belief size')
-    arg(parser, 'z_size', type=int, default=64, help='state size')
-    arg(parser, 'layers', type=int, default=2, help='number of layers')
+    arg(parser, 'b_size', type=int, default=32, help='belief size')
+    arg(parser, 'z_size', type=int, default=8, help='state size')
+    arg(parser, 'layers', type=int, default=1, help='number of layers')
     arg(parser, 't_diff_min', type=int, default=1, help='minimum time difference t2-t1')
-    arg(parser, 't_diff_max', type=int, default=4, help='maximum time difference t2-t1')
+    arg(parser, 't_diff_max', type=int, default=10, help='maximum time difference t2-t1')
     arg(parser, 't_diff_max_poss', type=int, default=-1, help='Maximum time difference across entire curriculum, not '
                                                               'just current run. Needed to set weight dims correctly. '
                                                               'Default of -1 uses seq_len - 1 instead.')  # TODO remove
@@ -78,7 +79,7 @@ if __name__ == '__main__':
     arg(parser, 'visualize_every', type=int, default=-1,
         help='visualize during training every these many steps (-1 to disable)')
     arg(parser, 'visualize_only', type=bool, default=False, help='epoch visualize the loaded model and exit')
-    arg(parser, 'visualize_split', type=str, default='test', help='split to visualize with visualize_only')
+    arg(parser, 'visualize_split', type=str, default='train', help='split to visualize with visualize_only')
     flags = parser.parse_args()
     if flags.threads < 0:
         flags.threads = max(1, len(os.sched_getaffinity(0)) - 1)

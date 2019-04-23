@@ -3,7 +3,6 @@ from multiprocessing import Process, Pipe
 import pickle
 
 import gym
-import gym_minigrid
 import gym_vecenv as vecenv
 import numpy as np
 import torch
@@ -45,12 +44,13 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         self.env_name = env
         self.env = SubprocVecEnv(env_fcns, n_workers=threads)
         self.env.reset()
-        self.buffers = [deque(maxlen=seq_len) for i in range(6)]
+        self.buffers = [deque(maxlen=seq_len) for i in range(7)]
         self.downsample = downsample
 
         sample_env = gym.make(env)
         self.action_space = sample_env.action_space.n
         sample_env.close()
+        self.frame_count = 0
 
         if not raw:
             with open(data_dir + '/' + env + '/img_stats.pk', 'rb') as f:
@@ -87,7 +87,8 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
             obs = torch.tensor(orig_obs).float() / 255
 
             if not self.raw:
-                obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
+                obs = ((obs - self.img_mean) / self.img_std).mean(1, keepdim=True)
+                obs = obs.clamp_(self.img_min, self.img_max)
                 obs = (obs - self.img_min) / (self.img_max - self.img_min)
 
                 h, w = obs.size()[2:]
@@ -95,16 +96,23 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
                 h, w = obs.size()[2:]
                 pad_h, pad_w = 160 - h, 160 - w
                 if self.downsample:
-                    obs = F.avg_pool2d(obs, (2, 2,), stride=2)
-                    pad_h = np.ceil(pad_h / 2.0)
-                    pad_w = np.ceil(pad_w / 2.0)
+                    obs = F.max_pool2d(obs, (8, 8,), stride=4, ceil_mode=True)
+                    pad_h = np.ceil(pad_h / 4.0) + 1
+                    pad_w = np.ceil(pad_w / 4.0) + 1
                 pad_h /= 2.0
                 pad_w /= 2.0
 
                 obs = F.pad(obs, (int(np.ceil(pad_w)), int(np.floor(pad_w)), int(np.ceil(pad_h)), int(np.floor(pad_h))),
                             mode="constant", value=0.5)
 
-        for i, val in enumerate([obs, in_actions, rewards, done, meta, orig_obs]):
+        next_frame_count = np.uint32(self.frame_count + obs.size(0))
+        if next_frame_count < self.frame_count:  # overflow
+            self.frame_count = 0
+            next_frame_count = self.frame_count + obs.size(0)
+        indices = np.arange(self.frame_count, next_frame_count, dtype=np.uint32)
+        self.frame_count = next_frame_count
+
+        for i, val in enumerate([obs, in_actions, rewards, done, indices, meta, orig_obs]):
             self.buffers[i].append(val)
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
@@ -156,12 +164,14 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
 class ReplayBuffer(Reader):
     '''Replay buffer implementing prioritized experience replay.'''
 
-    def __init__(self, emulator, buffer_size, iters_per_epoch, t_diff_min, t_diff_max, gamma, initial_len=-1,
-                 clip_errors=2.0, skip_init=False,):
+    def __init__(self, emulator, buffer_size, initial_buffer_size, iters_per_epoch, t_diff_min, t_diff_max, gamma,
+                 initial_len=-1, clip_errors=2.0, skip_init=False,):
+        self.emulator = emulator  # only to save and load frame_count
         self.t_diff_min = t_diff_min
         self.t_diff_max = t_diff_max
-        self.clip_errors = clip_errors  # XXX default value ideal only for Seaquest
+        self.clip_errors = clip_errors  # default value ideal for Atari
         self.buffer = misc.SumTree(buffer_size)
+        self.cache = {}
         self.beta = 0.4
         self.beta_increment_per_sampling = 0.001
         self.e = 0.01
@@ -172,15 +182,37 @@ class ReplayBuffer(Reader):
             print('* Skipping replay buffer initialization')
         else:
             print('* Initializing replay buffer')
-            while self.buffer.count < buffer_size:
+            while self.buffer.count < initial_buffer_size:
                 for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
-                    self.add(conditional_batch.get_next()[:4], truncated_len=initial_len)
+                    self.add(conditional_batch.get_next()[:5], truncated_len=initial_len)
                     if self.buffer.count >= buffer_size:
                         break
             print('* Replay buffer initialized')
         super().__init__({'train': iters_per_epoch})
+
+    def add_cached(self, priority, idx_data, ob):
+        ob = (ob * 255.0).numpy().astype(np.uint8)
+        for i, o in zip(idx_data[0], ob):
+            if i not in self.cache:
+                self.cache[i] = [o, 1]
+            else:
+                self.cache[i][1] += 1
+        old_idx_data = self.buffer.add(priority, idx_data)
+        if isinstance(old_idx_data, tuple):
+            for i in old_idx_data[0]:
+                ref_count = self.cache[i][1]
+                if ref_count == 1:
+                    del self.cache[i]
+                else:
+                    self.cache[i][1] -= 1
+
+    def get_cached(self, s):
+        (idx, p, idx_data) = self.buffer.get(s)
+        ob = np.stack([self.cache[i][0] for i in idx_data[0]])
+        data = (torch.from_numpy((ob / 255.0).astype(np.float32)),) + idx_data[1:]
+        return idx, p, data
 
     def calc_priority(self, error):
         return np.minimum(self.clip_errors, error + self.e) ** self.a
@@ -190,7 +222,7 @@ class ReplayBuffer(Reader):
         t_diff_max = t_diff_max or self.t_diff_max
 
         priority = self.calc_priority(np.inf)
-        for ob, action, reward, done in zip(*trajs):
+        for ob, action, reward, done, ob_ind in zip(*trajs):
             if truncated_len <= 0:
                 truncated_len = ob.size(0)
 
@@ -220,11 +252,11 @@ class ReplayBuffer(Reader):
             t1 = np.random.randint(min_t1, max_t1 + 1)
             t2 = np.random.randint(t1 + t_diff_min, min(t1 + t_diff_max, max_t2) + 1)
             if t1 + 1 <= t2:
-                clipped_reward = np.clip(reward[t1 + 1:t2 + 1] / 10.0, 0.0, 2.0)
+                clipped_reward = np.clip(reward[t1 + 1:t2 + 1], -1.0, 1.0)
                 returns = (self.gammas[:t2 - t1] * clipped_reward).sum()
             else:
                 returns = 0.0
-            self.buffer.add(priority, (ob, action, reward, done, t1, t2, returns))
+            self.add_cached(priority, (ob_ind, action, reward, done, t1, t2, returns), ob)
 
     def update(self, indices, errors):
         priorities = self.calc_priority(errors)
@@ -232,11 +264,12 @@ class ReplayBuffer(Reader):
             self.buffer.update(idx, priority)
 
     def get_buffer(self):
-        return self.buffer, self.beta
+        return self.buffer, self.cache, self.beta, self.emulator.action_conditional_batch.frame_count
 
     def load_buffer(self, buffer):
         print('* Loading external replay buffer')
-        self.buffer, self.beta = buffer
+        # this has to be done before the first get_next() is called in the emulator
+        self.buffer, self.cache, self.beta, self.emulator.action_conditional_batch.frame_count = buffer
 
     def sample(self, n):
         batch = []
@@ -248,7 +281,7 @@ class ReplayBuffer(Reader):
             a = segment * i
             b = segment * (i + 1)
             s = np.random.uniform(a, b)
-            (idx, p, data) = self.buffer.get(s)
+            idx, p, data = self.get_cached(s)
             priorities.append(p)
             batch.append(data)
             idxs.append(idx)
