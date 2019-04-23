@@ -12,7 +12,7 @@ from pylego import misc
 from pylego.reader import Reader
 
 
-def make_env(env_name, frameskip=6, steps=1000000, secs=100000):
+def make_env(env_name, frameskip=4, steps=1000000, secs=100000):
     if "minigrid" in env_name.lower():
         env = gym.make(env_name)
     else:
@@ -25,7 +25,7 @@ def make_env(env_name, frameskip=6, steps=1000000, secs=100000):
 
 class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
-    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=6, raw=False,
+    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=4, raw=False,
                  data_dir='data'):
         self.env_name = env
         if "minigrid" in self.env_name.lower():
@@ -164,8 +164,8 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
 class ReplayBuffer(Reader):
     '''Replay buffer implementing prioritized experience replay.'''
 
-    def __init__(self, emulator, buffer_size, iters_per_epoch, t_diff_min, t_diff_max, gamma, initial_len=-1,
-                 clip_errors=2.0, skip_init=False,):
+    def __init__(self, emulator, buffer_size, initial_buffer_size, iters_per_epoch, t_diff_min, t_diff_max, gamma,
+                 initial_len=-1, clip_errors=2.0, skip_init=False,):
         self.emulator = emulator  # only to save and load frame_count
         self.t_diff_min = t_diff_min
         self.t_diff_max = t_diff_max
@@ -182,7 +182,7 @@ class ReplayBuffer(Reader):
             print('* Skipping replay buffer initialization')
         else:
             print('* Initializing replay buffer')
-            while self.buffer.count < buffer_size:
+            while self.buffer.count < initial_buffer_size:
                 for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):

@@ -53,9 +53,9 @@ class BaseRLRunner(runner.Runner):
 
         self.seq_len_decay = misc.LinearDecay(flags.seq_len_decay_start, flags.seq_len_decay_end,
                                               flags.seq_len_initial, flags.seq_len)
-        reader = ReplayBuffer(self.emulator, flags.replay_size, flags.iters_per_epoch, flags.t_diff_min,
-                              flags.t_diff_max, flags.discount_factor, initial_len=int(self.seq_len_decay.get_y(0)),
-                              skip_init=bool(flags.load_file))
+        reader = ReplayBuffer(self.emulator, flags.replay_size, flags.initial_replay_size, flags.iters_per_epoch,
+                              flags.t_diff_min, flags.t_diff_max, flags.discount_factor,
+                              initial_len=int(self.seq_len_decay.get_y(0)), skip_init=bool(flags.load_file))
 
         summary_dir = flags.log_dir + '/summary'
         log_keys.append('rewards_per_ep')
