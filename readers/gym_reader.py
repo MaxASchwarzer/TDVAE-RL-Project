@@ -186,12 +186,12 @@ class ReplayBuffer(Reader):
             print('* Skipping replay buffer initialization')
         else:
             print('* Initializing replay buffer')
-            while self.buffer.count < initial_buffer_size:
+            while self.buffer.count < min(initial_buffer_size, buffer_size):
                 for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
                     self.add(conditional_batch.get_next()[:5], truncated_len=initial_len)
-                    if self.buffer.count >= initial_buffer_size:
+                    if self.buffer.count >= min(initial_buffer_size, buffer_size):
                         break
             print('* Replay buffer initialized')
         super().__init__({'train': iters_per_epoch})
