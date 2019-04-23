@@ -279,7 +279,7 @@ class TDQVAE(nn.Module):
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         if actions is not None:
-            rewards = (rewards[..., None] / 10.0).clamp(0.0, 2.0)
+            rewards = (rewards[..., None] / 10.0).clamp(-1.0, 1.0)
             action_embs = self.action_embedding(actions)
             processed_x = torch.cat([processed_x, action_embs, rewards], -1)
 
@@ -306,7 +306,7 @@ class TDQVAE(nn.Module):
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         if actions is not None:
-            rewards = (rewards[..., None] / 10.0).clamp(0.0, 2.0)
+            rewards = (rewards[..., None] / 10.0).clamp(-1.0, 1.0)
             action_embs = self.action_embedding(actions)
             processed_x = torch.cat([processed_x, action_embs, rewards], -1)
         else:
@@ -438,7 +438,7 @@ class TDQVAE(nn.Module):
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         if actions is not None:
-            rewards = (rewards[..., None] / 10.0).clamp(0.0, 2.0)
+            rewards = (rewards[..., None] / 10.0).clamp(-1.0, 1.0)
             action_embs = self.action_embedding(actions)
             processed_x = torch.cat([processed_x, action_embs, rewards], -1)
         else:
@@ -446,7 +446,8 @@ class TDQVAE(nn.Module):
 
         # aggregate the belief b
         b = self.b_rnn(processed_x, done)[:, t]  # size: bs, time, layers, dim
-        t_encodings = self.time_encoding(b.new_zeros(b.size(0), dtype=torch.long)) * self.time_encoding_scale
+        t_encodings = self.time_encoding(b.new_ones(b.size(0), dtype=torch.long) *
+                                         ((self.t_diff_max - self.t_diff_min) // 2)) * self.time_encoding_scale
 
         # compute z from b
         p_z_bs = []
@@ -464,14 +465,14 @@ class TDQVAE(nn.Module):
             next_z = []
             for layer in range(self.layers - 1, -1, -1):
                 if layer == self.layers - 1:
-                    if actions is not None:
-                        inputs = torch.cat([z, t_encodings, actions[:, t+i+1]], dim=1)
+                    if action_embs is not None:
+                        inputs = torch.cat([z, t_encodings, action_embs[:, t+i+1]], dim=1)
                     else:
                         inputs = torch.cat([z, t_encodings], dim=1)
                     pt_z2_z1_mu, pt_z2_z1_logvar = self.z2_z1[layer](inputs)
                 else:
-                    if actions is not None:
-                        inputs = torch.cat([z, pt_z2_z1, t_encodings, actions[:, t+i+1]], dim=1)
+                    if action_embs is not None:
+                        inputs = torch.cat([z, pt_z2_z1, t_encodings, action_embs[:, t+i+1]], dim=1)
                     else:
                         inputs = torch.cat([z, pt_z2_z1, t_encodings], dim=1)
                     pt_z2_z1_mu, pt_z2_z1_logvar = self.z2_z1[layer](inputs)

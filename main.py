@@ -77,7 +77,7 @@ if __name__ == '__main__':
     arg(parser, 'visualize_every', type=int, default=-1,
         help='visualize during training every these many steps (-1 to disable)')
     arg(parser, 'visualize_only', type=bool, default=False, help='epoch visualize the loaded model and exit')
-    arg(parser, 'visualize_split', type=str, default='test', help='split to visualize with visualize_only')
+    arg(parser, 'visualize_split', type=str, default='train', help='split to visualize with visualize_only')
     flags = parser.parse_args()
     if flags.threads < 0:
         flags.threads = max(1, len(os.sched_getaffinity(0)) - 1)
