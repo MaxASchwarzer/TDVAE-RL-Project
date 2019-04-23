@@ -1,5 +1,6 @@
 import collections
 import glob
+import gzip
 import pathlib
 
 import torch
@@ -10,7 +11,7 @@ import numpy as np
 from pylego import ops, misc
 
 from ..baseconditional import BaseGymTDVAE
-from .utils import Discriminator, SAGANGenerator
+from .utils import SAGANGenerator
 
 
 class DBlock(nn.Module):
@@ -489,7 +490,6 @@ class GymTDQVAE(BaseGymTDVAE):
         self.rl = rl
         self.replay_buffer = replay_buffer
 
-        self.adversarial = flags.adversarial
         self.beta_decay = misc.LinearDecay(flags.beta_decay_start, flags.beta_decay_end, flags.beta_initial, flags.beta)
 
         self.d_weight = flags.d_weight
@@ -506,17 +506,7 @@ class GymTDQVAE(BaseGymTDVAE):
             if rl:
                 model_kwargs['rl'] = True
             model = TDQVAE(*model_args, **model_kwargs)
-        if self.adversarial:
-            kwargs['optimizer'] = None  # we create an optimizer later
         super().__init__(model, flags, *args, **kwargs)
-
-        if self.adversarial:
-            self.dnet = Discriminator(channels=3, d_size=flags.d_size)
-            self.dnet.to(self.device)
-
-            self.adversarial_optim = torch.optim.Adam(self.dnet.parameters(), lr=flags.d_lr, betas=(0.0, 0.9))
-            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=flags.learning_rate, betas=(0.0, 0.9))
-            flags.optimizer = self.optimizer
 
         if rl:
             self.target_net = TDQVAE(*model_args, **model_kwargs)
@@ -549,20 +539,6 @@ class GymTDQVAE(BaseGymTDVAE):
         bce = loss(pd_x2_z2, x2, reduction='none').sum(dim=1)
         bce_optimal = loss(x2, x2, reduction='none').sum(dim=1)
         bce_diff = bce - bce_optimal
-
-        if self.adversarial and self.is_training():
-            r_in = x2.view(x2.shape[0], x.shape[2], x.shape[3], x.shape[4])
-            f_in = pd_x2_z2.view(x2.shape[0], x.shape[2], x.shape[3], x.shape[4])
-            for _ in range(self.d_steps):
-                d_loss, g_loss, hidden_loss = self.dnet.get_loss(r_in, f_in)
-                d_loss.backward(retain_graph=True)
-                # print(d_loss, g_loss)
-                self.adversarial_optim.step()
-                self.adversarial_optim.zero_grad()
-            bce_diff = hidden_loss  # XXX bce_diff added twice to loss?
-        else:
-            g_loss = 0
-            hidden_loss = 0
 
         if self.rl:
             # Note: x[t], rewards[t] is a result of actions[t]
@@ -622,15 +598,12 @@ class GymTDQVAE(BaseGymTDVAE):
         returns_loss = is_weight * returns_loss
         bce_optimal = is_weight * bce_optimal
         bce_diff = is_weight * bce_diff
-        hidden_loss = is_weight * hidden_loss
-        g_loss = is_weight * g_loss
         kl_div_qs_pb = is_weight * kl_div_qs_pb
         kl_shift_qb_pt = is_weight * kl_shift_qb_pt
         rl_loss = is_weight * rl_loss
 
         beta = self.beta_decay.get_y(self.get_train_steps())
-        tdvae_loss = bce_diff + returns_loss + hidden_loss + self.d_weight * g_loss + beta * (kl_div_qs_pb +
-                                                                                              kl_shift_qb_pt)
+        tdvae_loss = bce_diff + returns_loss + beta * (kl_div_qs_pb + kl_shift_qb_pt)
         loss = self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss
 
         if self.rl:  # workaround to work with non-RL setting
@@ -652,17 +625,14 @@ class GymTDQVAE(BaseGymTDVAE):
     def load(self, load_file):
         """Load a model from a saved file."""
         print("* Loading model from", load_file, "...")
-        m_state_dict, target_net_state_dict, o_state_dict, train_steps, replay_buffer = torch.load(load_file)
+        with gzip.open(load_file, 'rb', compresslevel=1) as f:
+            m_state_dict, target_net_state_dict, o_state_dict, train_steps, replay_buffer = torch.load(f)
         self.model.load_state_dict(m_state_dict)
         if self.target_net is not None and target_net_state_dict is not None:
             self.target_net.load_state_dict(target_net_state_dict)
             self.replay_buffer.load_buffer(replay_buffer)
         self.optimizer.load_state_dict(o_state_dict)
         self.train_steps = train_steps
-        if self.adversarial:
-            m_state_dict, o_state_dict = torch.load(load_file+"disc")
-            self.dnet.load_state_dict(m_state_dict)
-            self.adversarial_optim.load_state_dict(o_state_dict)
         print("* Loaded model from", load_file)
 
     def save(self, save_file):
@@ -682,10 +652,6 @@ class GymTDQVAE(BaseGymTDVAE):
             target_net = None
             replay_buffer = None
         save_objs = [self.model.state_dict(), target_net, self.optimizer.state_dict(), self.train_steps, replay_buffer]
-        torch.save(save_objs, save_fname)
-
-        if self.adversarial:
-            save_objs = [self.dnet.state_dict(), self.adversarial_optim.state_dict()]
-            torch.save(save_objs, save_fname+"disc")
-
+        with gzip.open(save_fname, 'wb', compresslevel=1) as f:
+            torch.save(save_objs, f)
         print("* Saved model to", save_fname)

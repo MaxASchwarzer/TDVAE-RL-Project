@@ -44,12 +44,13 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         self.env_name = env
         self.env = SubprocVecEnv(env_fcns, n_workers=threads)
         self.env.reset()
-        self.buffers = [deque(maxlen=seq_len) for i in range(6)]
+        self.buffers = [deque(maxlen=seq_len) for i in range(7)]
         self.downsample = downsample
 
         sample_env = gym.make(env)
         self.action_space = sample_env.action_space.n
         sample_env.close()
+        self.frame_count = 0
 
         if not raw:
             with open(data_dir + '/' + env + '/img_stats.pk', 'rb') as f:
@@ -103,7 +104,14 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
                 obs = F.pad(obs, (int(np.ceil(pad_w)), int(np.floor(pad_w)), int(np.ceil(pad_h)), int(np.floor(pad_h))),
                             mode="constant", value=0.5)
 
-        for i, val in enumerate([obs, in_actions, rewards, done, meta, orig_obs]):
+        next_frame_count = np.uint32(self.frame_count + obs.size(0))
+        if next_frame_count < self.frame_count:  # overflow
+            self.frame_count = 0
+            next_frame_count = self.frame_count + obs.size(0)
+        indices = np.arange(self.frame_count, next_frame_count, dtype=np.uint32)
+        self.frame_count = next_frame_count
+
+        for i, val in enumerate([obs, in_actions, rewards, done, indices, meta, orig_obs]):
             self.buffers[i].append(val)
 
         if fill_buffer and len(self.buffers[0]) < self.seq_len:
@@ -157,11 +165,12 @@ class ReplayBuffer(Reader):
 
     def __init__(self, emulator, buffer_size, iters_per_epoch, t_diff_min, t_diff_max, gamma, initial_len=-1,
                  clip_errors=2.0, skip_init=False,):
+        self.emulator = emulator  # only to save and load frame_count
         self.t_diff_min = t_diff_min
         self.t_diff_max = t_diff_max
         self.clip_errors = clip_errors  # default value ideal for Atari
         self.buffer = misc.SumTree(buffer_size)
-        self.cache = {}  # TODO use
+        self.cache = {}
         self.beta = 0.4
         self.beta_increment_per_sampling = 0.001
         self.e = 0.01
@@ -176,19 +185,32 @@ class ReplayBuffer(Reader):
                 for conditional_batch in emulator.iter_batches('train', emulator.batch_size, threads=emulator.threads,
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
-                    self.add(conditional_batch.get_next()[:4], truncated_len=initial_len)
+                    self.add(conditional_batch.get_next()[:5], truncated_len=initial_len)
                     if self.buffer.count >= buffer_size:
                         break
             print('* Replay buffer initialized')
         super().__init__({'train': iters_per_epoch})
 
-    def add_cached(self, priority, data):
-        data = ((data[0] * 255.0).numpy().astype(np.uint8),) + data[1:]
-        self.buffer.add(priority, data)
+    def add_cached(self, priority, idx_data, ob):
+        ob = (ob * 255.0).numpy().astype(np.uint8)
+        for i, o in zip(idx_data[0], ob):
+            if i not in self.cache:
+                self.cache[i] = [o, 1]
+            else:
+                self.cache[i][1] += 1
+        old_idx_data = self.buffer.add(priority, idx_data)
+        if isinstance(old_idx_data, tuple):
+            for i in old_idx_data[0]:
+                ref_count = self.cache[i][1]
+                if ref_count == 1:
+                    del self.cache[i]
+                else:
+                    self.cache[i][1] -= 1
 
     def get_cached(self, s):
-        (idx, p, data) = self.buffer.get(s)
-        data = (torch.from_numpy((data[0] / 255.0).astype(np.float32)),) + data[1:]
+        (idx, p, idx_data) = self.buffer.get(s)
+        ob = np.stack([self.cache[i][0] for i in idx_data[0]])
+        data = (torch.from_numpy((ob / 255.0).astype(np.float32)),) + idx_data[1:]
         return idx, p, data
 
     def calc_priority(self, error):
@@ -199,7 +221,7 @@ class ReplayBuffer(Reader):
         t_diff_max = t_diff_max or self.t_diff_max
 
         priority = self.calc_priority(np.inf)
-        for ob, action, reward, done in zip(*trajs):
+        for ob, action, reward, done, ob_ind in zip(*trajs):
             if truncated_len <= 0:
                 truncated_len = ob.size(0)
 
@@ -233,7 +255,7 @@ class ReplayBuffer(Reader):
                 returns = (self.gammas[:t2 - t1] * clipped_reward).sum()
             else:
                 returns = 0.0
-            self.add_cached(priority, (ob, action, reward, done, t1, t2, returns))
+            self.add_cached(priority, (ob_ind, action, reward, done, t1, t2, returns), ob)
 
     def update(self, indices, errors):
         priorities = self.calc_priority(errors)
@@ -241,11 +263,12 @@ class ReplayBuffer(Reader):
             self.buffer.update(idx, priority)
 
     def get_buffer(self):
-        return self.buffer, self.cache, self.beta
+        return self.buffer, self.cache, self.beta, self.emulator.action_conditional_batch.frame_count
 
     def load_buffer(self, buffer):
         print('* Loading external replay buffer')
-        self.buffer, self.cache, self.beta = buffer
+        # this has to be done before the first get_next() is called in the emulator
+        self.buffer, self.cache, self.beta, self.emulator.action_conditional_batch.frame_count = buffer
 
     def sample(self, n):
         batch = []

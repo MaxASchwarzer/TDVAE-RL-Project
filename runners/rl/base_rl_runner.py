@@ -40,8 +40,6 @@ class BaseRLRunner(runner.Runner):
             self.visualize = True
 
         self.emulator = GymReader(flags.env, flags.seq_len, flags.batch_size, flags.threads, np.inf, raw=flags.raw)
-        self.emulator_iter = self.emulator.iter_batches('train', flags.batch_size, threads=flags.threads)
-        self.emulator_state = next(self.emulator_iter).get_next()[:4]
         self.action_space = self.emulator.action_space()
         self.seq_len_upper = flags.seq_len
         self.eps_decay = misc.LinearDecay(flags.eps_decay_start, flags.eps_decay_end, 1.0, flags.eps_final)
@@ -74,6 +72,8 @@ class BaseRLRunner(runner.Runner):
         self.history_length = int(np.ceil(0.5 * (int(self.seq_len_decay.get_y(0)) + flags.t_diff_min))) - 1
         print('* Initial simulation history length:', self.history_length)
 
+        self.emulator_iter = self.emulator.iter_batches('train', flags.batch_size, threads=flags.threads)
+        self.emulator_state = next(self.emulator_iter).get_next()[:5]  # init emulator state after model loading
         self.rewards = np.zeros([self.emulator_state[0].size(0)])
 
     def run_epoch(self, epoch, split, train=False, log=True):
@@ -114,7 +114,7 @@ class BaseRLRunner(runner.Runner):
                 do_random = np.random.choice(2, size=selected_actions.shape, p=[1. - eps, eps])
                 actions = np.where(do_random, random_actions, selected_actions)
 
-                self.emulator_state = next(self.emulator_iter).get_next(actions)[:4]
+                self.emulator_state = next(self.emulator_iter).get_next(actions)[:5]
 
                 # add trajectory to replay buffer
                 self.reader.add(self.emulator_state, truncated_len=seq_len)
