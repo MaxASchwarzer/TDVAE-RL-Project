@@ -353,7 +353,10 @@ def worker(remote, parent_remote, env_fn_wrappers):
                 ob, reward, done, info = env.step(action)
                 obs.append(ob)
                 rewards.append(reward)
-                dones.append(done)
+                if reward < 0.0:
+                    dones.append(True)  # FIXME for now, consider episode done when something bad happens
+                else:
+                    dones.append(done)
                 infos.append(info)
                 if np.any(done):
                     ob = env.reset()
