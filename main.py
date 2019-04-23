@@ -39,7 +39,7 @@ if __name__ == '__main__':
     arg(parser, 'rl_weight', type=float, default=25.0, help='Parameter for DQN loss scale')
     arg(parser, 'grad_norm', type=float, default=5.0, help='gradient norm clipping (-1 to disable)')
     arg(parser, 'adversarial', type=bool, default=False, help='Use an auxiliary adversarial loss on reconstructions')
-    arg(parser, 'rl', type=bool, default=False, help='Do RL')
+    arg(parser, 'rl', type=bool, default=True, help='Do RL')
     arg(parser, 'mpc', type=bool, default=False, help='Do MPC')
     arg(parser, 'seq_len', type=int, default=20, help='sequence length')
     arg(parser, 'seq_len_decay_start', type=int, default=0, help='step to start increasing seq len')
