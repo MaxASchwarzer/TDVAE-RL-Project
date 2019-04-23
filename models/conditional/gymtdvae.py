@@ -70,8 +70,8 @@ class ConvPreProcess(nn.Module):
     """ The pre-process layer for image.
     """
 
-    def __init__(self, input_size, d_hidden, d_out, blocks=None, scale=(2, 2, 2), stride=(2, 2, 2, 2),
-                 l_per_block=(2, 2, 2, 2)):
+    def __init__(self, input_size, d_hidden, d_out, blocks=None, scale=(2, 2), stride=(2, 2, 2),
+                 l_per_block=(2, 2, 2)):
         super().__init__()
 
         d_in = input_size[0]
@@ -500,7 +500,7 @@ class GymTDQVAE(BaseGymTDVAE):
             t_diff_max_poss = flags.t_diff_max_poss
 
         if model is None:
-            model_args = [(3, 80, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
+            model_args = [(1, 40, 40), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
                           flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, t_diff_max_poss]
             model_kwargs = {'action_space': action_space}
             if rl:

@@ -12,7 +12,7 @@ from pylego import misc
 from pylego.reader import Reader
 
 
-def make_env(env_name, frameskip=4, steps=1000000, secs=100000):
+def make_env(env_name, frameskip=6, steps=1000000, secs=100000):
     if "minigrid" in env_name.lower():
         env = gym.make(env_name)
     else:
@@ -25,7 +25,7 @@ def make_env(env_name, frameskip=4, steps=1000000, secs=100000):
 
 class ActionConditionalBatch:  # TODO move generalized form of this to pylego
 
-    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=4, raw=False,
+    def __init__(self, env, seq_len, batch_size, threads, downsample=True, inner_frameskip=6, raw=False,
                  data_dir='data'):
         self.env_name = env
         if "minigrid" in self.env_name.lower():
@@ -87,7 +87,8 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
             obs = torch.tensor(orig_obs).float() / 255
 
             if not self.raw:
-                obs = ((obs - self.img_mean) / self.img_std).clamp_(self.img_min, self.img_max)
+                obs = ((obs - self.img_mean) / self.img_std).mean(1, keepdim=True)
+                obs = obs.clamp_(self.img_min, self.img_max)
                 obs = (obs - self.img_min) / (self.img_max - self.img_min)
 
                 h, w = obs.size()[2:]
@@ -95,9 +96,9 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
                 h, w = obs.size()[2:]
                 pad_h, pad_w = 160 - h, 160 - w
                 if self.downsample:
-                    obs = F.avg_pool2d(obs, (2, 2,), stride=2)
-                    pad_h = np.ceil(pad_h / 2.0)
-                    pad_w = np.ceil(pad_w / 2.0)
+                    obs = F.max_pool2d(obs, (8, 8,), stride=4, ceil_mode=True)
+                    pad_h = np.ceil(pad_h / 4.0) + 1
+                    pad_w = np.ceil(pad_w / 4.0) + 1
                 pad_h /= 2.0
                 pad_w /= 2.0
 
