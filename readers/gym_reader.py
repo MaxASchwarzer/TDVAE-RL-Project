@@ -187,7 +187,7 @@ class ReplayBuffer(Reader):
                                                                max_batches=int(np.ceil(buffer_size /
                                                                                        emulator.batch_size))):
                     self.add(conditional_batch.get_next()[:5], truncated_len=initial_len)
-                    if self.buffer.count >= buffer_size:
+                    if self.buffer.count >= initial_buffer_size:
                         break
             print('* Replay buffer initialized')
         super().__init__({'train': iters_per_epoch})
