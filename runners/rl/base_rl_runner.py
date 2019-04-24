@@ -28,8 +28,7 @@ class BaseRLRunner(runner.Runner):
         # MiniGrid can be installed by cloning and installing https://github.com/maximecb/gym-minigrid.git
         if "minigrid" in flags.env.lower():
             print("Attempting to import MiniGrid environments.")
-            import gym_minigrid
-
+            # import gym_minigrid  # XXX why importing this here?
             # Image normalization will crash minigrid, since observations aren't pixels, so force this
             flags.raw = True
 
@@ -40,18 +39,14 @@ class BaseRLRunner(runner.Runner):
             self.visualize = True
 
         self.mpc = flags.mpc
-        self.emulator = GymReader(flags.env, flags.seq_len, flags.batch_size, flags.threads, np.inf, raw=flags.raw)
+        self.emulator = GymReader(flags.env, flags.seq_len, int(np.ceil(flags.batch_size / flags.add_replay_every)),
+                                  flags.threads, np.inf, raw=flags.raw)
         self.action_space = self.emulator.action_space()
         self.seq_len_upper = flags.seq_len
         self.eps_decay = misc.LinearDecay(flags.eps_decay_start, flags.eps_decay_end, 1.0, flags.eps_final)
-        if flags.add_every_initial < 0:
-            flags.add_every_initial = flags.add_replay_every
-        self.replay_ratio_decay = misc.LinearDecay(flags.add_every_start, flags.add_every_end,
-                                                   flags.add_every_initial, flags.add_replay_every)
 
         if flags.seq_len_initial < 0:
             flags.seq_len_initial = flags.seq_len
-
         self.seq_len_decay = misc.LinearDecay(flags.seq_len_decay_start, flags.seq_len_decay_end,
                                               flags.seq_len_initial, flags.seq_len)
         reader = ReplayBuffer(self.emulator, flags.replay_size, flags.initial_replay_size, flags.iters_per_epoch,
@@ -73,9 +68,14 @@ class BaseRLRunner(runner.Runner):
         self.history_length = int(np.ceil(0.5 * (int(self.seq_len_decay.get_y(0)) + flags.t_diff_min))) - 1
         print('* Initial simulation history length:', self.history_length)
 
-        self.emulator_iter = self.emulator.iter_batches('train', flags.batch_size, threads=flags.threads)
+        self.emulator_iter = self.emulator.iter_batches('train', self.emulator.batch_size, threads=flags.threads)
         self.emulator_state = next(self.emulator_iter).get_next()[:5]  # init emulator state after model loading
-        self.rewards = np.zeros([self.emulator_state[0].size(0)])
+
+        self.eval_episodes = self.flags.eval_episodes
+        if self.eval_episodes <= 0:
+            self.eval_episodes = self.flags.batch_size
+        self.eval_emulator = GymReader(flags.env, flags.seq_len, self.eval_episodes, flags.threads,
+                                       flags.eval_episode_length, raw=flags.raw)
 
     def run_epoch(self, epoch, split, train=False, log=True):
         """Iterates the epoch data for a specific split."""
@@ -92,46 +92,36 @@ class BaseRLRunner(runner.Runner):
             except StopIteration:
                 break
 
-            ratio = int(self.replay_ratio_decay.get_y(self.model.get_train_steps()))
             seq_len = int(self.seq_len_decay.get_y(self.model.get_train_steps()))
             self.history_length = int(np.ceil(0.5 * (seq_len + self.flags.t_diff_min))) - 1
             simulation_start = seq_len - self.history_length
-            if self.model.get_train_steps() % ratio == 0:
-                obs, actions, rewards, done = self.emulator_state[:4]
-                obs = obs[:, simulation_start:]
-                actions = actions[:, simulation_start:]
-                rewards = rewards[:, simulation_start:]
-                done = done[:, simulation_start:]
-                obs, actions, rewards, done = self.model.prepare_batch([obs, actions, rewards, done])
 
-                self.model.set_train(False)
-                with torch.no_grad():
-                    q = self.model.model.compute_q(obs, actions, rewards, done)
-                self.model.set_train(True)
+            obs, actions, rewards, done = self.emulator_state[:4]
+            obs = obs[:, simulation_start:]
+            actions = actions[:, simulation_start:]
+            rewards = rewards[:, simulation_start:]
+            done = done[:, simulation_start:]
+            obs, actions, rewards, done = self.model.prepare_batch([obs, actions, rewards, done])
 
-                if self.mpc:
-                    selected_actions = self.model.model.predictive_control(obs, actions, rewards, done,
-                                                                           num_rollouts=10, rollout_length=5,
-                                                                           jump_length=5)
-                else:
-                    selected_actions = torch.argmax(q, dim=1).cpu().numpy()
-                random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
-                eps = self.eps_decay.get_y(self.model.get_train_steps())
-                do_random = np.random.choice(2, size=selected_actions.shape, p=[1. - eps, eps])
-                actions = np.where(do_random, random_actions, selected_actions)
+            self.model.set_train(False)
+            with torch.no_grad():
+                q = self.model.model.compute_q(obs, actions, rewards, done)
+            self.model.set_train(True)
 
-                self.emulator_state = next(self.emulator_iter).get_next(actions)[:5]
+            if self.mpc:
+                selected_actions = self.model.model.predictive_control(obs, actions, rewards, done, num_rollouts=10,
+                                                                       rollout_length=5, jump_length=5)
+            else:
+                selected_actions = torch.argmax(q, dim=1).cpu().numpy()
+            random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
+            eps = self.eps_decay.get_y(self.model.get_train_steps())
+            do_random = np.random.choice(2, size=selected_actions.shape, p=[1. - eps, eps])
+            actions = np.where(do_random, random_actions, selected_actions)
 
-                # add trajectory to replay buffer
-                self.reader.add(self.emulator_state, truncated_len=seq_len)
+            self.emulator_state = next(self.emulator_iter).get_next(actions)[:5]
 
-                rewards = self.emulator_state[2][:, -1]
-                self.rewards += rewards
-                dones = self.emulator_state[3][:, -1] > 1e-6
-                if np.any(dones):
-                    rewards_per_ep = self.rewards[dones].mean()
-                    self.rewards[dones] = 0.0
-                    self.log_train_report({'rewards_per_ep': rewards_per_ep}, self.model.get_train_steps())
+            # add trajectory to replay buffer
+            self.reader.add(self.emulator_state, truncated_len=seq_len)
 
             train_batch = trim_batch(seq_len, train_batch)
             report = self.clean_report(self.run_batch(train_batch, train=train))
@@ -152,7 +142,37 @@ class BaseRLRunner(runner.Runner):
 
             timestamp = time.time()
 
+        # Evaluate
+        print('* Evaluating greedy policy')
+        actions = None
+        sum_of_rewards = np.zeros([self.eval_episodes])
+        all_dones = np.zeros([self.eval_episodes])
+        self.eval_emulator.reset()
+        for cond_batch in self.eval_emulator.iter_batches('train', self.eval_episodes, threads=self.flags.threads):
+            obs, actions, rewards, done = cond_batch.get_next(actions)[:4]
+            if actions is not None:
+                sum_of_rewards += rewards[:, -1] * np.maximum(1.0 - all_dones, 0.0)
+                all_dones += done[:, -1]
+                if np.all(all_dones > 1e-6):
+                    break
+
+            obs = obs[:, simulation_start:]
+            actions = actions[:, simulation_start:]
+            rewards = rewards[:, simulation_start:]
+            done = done[:, simulation_start:]
+            obs, actions, rewards, done = self.model.prepare_batch([obs, actions, rewards, done])
+            self.model.set_train(False)
+            with torch.no_grad():
+                q = self.model.model.compute_q(obs, actions, rewards, done)
+            self.model.set_train(True)
+            actions = torch.argmax(q, dim=1).cpu().numpy()
+
+        report = {'rewards_per_ep_mean': sum_of_rewards.mean(), 'rewards_per_ep_std': sum_of_rewards.std()}
+        self.log_report(report, self.model.get_train_steps())
+
+        # Finish epoch
         epoch_report = self.get_epoch_report()
+        epoch_report.update(report)
         self.print_report(epoch, epoch_report)
         if train:
             self.log_epoch_train_report(epoch_report, self.model.get_train_steps())
