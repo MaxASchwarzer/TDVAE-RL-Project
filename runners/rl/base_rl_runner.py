@@ -55,7 +55,7 @@ class BaseRLRunner(runner.Runner):
                               initial_len=int(self.seq_len_decay.get_y(0)), skip_init=bool(flags.load_file))
 
         summary_dir = flags.log_dir + '/summary'
-        log_keys.append('rewards_per_ep')
+        log_keys.extend(['rewards_per_ep_mean', 'rewards_per_ep_std'])
         super().__init__(reader, flags.batch_size, flags.epochs, summary_dir, log_keys=log_keys,
                          threads=flags.threads, print_every=flags.print_every, visualize_every=flags.visualize_every,
                          max_batches=flags.max_batches, *args, **kwargs)
