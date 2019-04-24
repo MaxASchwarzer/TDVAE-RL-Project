@@ -14,98 +14,7 @@ from pylego import ops, misc
 
 from ..baseconditional import BaseGymTDVAE
 from .utils import Discriminator, SAGANGenerator
-
-
-class DBlock(nn.Module):
-    """ A basic building block for computing parameters of a normal distribution.
-    Corresponds to D in the appendix."""
-
-    def __init__(self, input_size, hidden_size, output_size):
-        super().__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(input_size, hidden_size)
-        self.fc_mu = nn.Linear(hidden_size, output_size)
-        self.fc_logsigma = nn.Linear(hidden_size, output_size)
-
-    def forward(self, input_):
-        t = torch.tanh(self.fc1(input_))
-        t = t * torch.sigmoid(self.fc2(input_))
-        mu = self.fc_mu(t)
-        logsigma = self.fc_logsigma(t)
-        return mu, logsigma
-
-
-class PreProcess(nn.Module):
-    """ The default preprocessing layer for 1d inputs.
-    """
-
-    def __init__(self, input_size, processed_x_size):
-        super().__init__()
-        self.fc1 = nn.Linear(input_size, processed_x_size*4)
-        self.fc2 = nn.Linear(processed_x_size*4, processed_x_size)
-
-    def forward(self, input_):
-        t = F.elu(self.fc1(input_))
-        t = F.elu(self.fc2(t))
-        return t
-
-
-class Decoder(nn.Module):
-    """ A decoder layer converting hidden states to observation reconstructions.  Not convolutional; used to
-        reconstruct 1d states only.
-    """
-
-    def __init__(self, z_size, hidden_size, x_size):
-        super().__init__()
-        self.fc1 = nn.Linear(z_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, x_size)
-
-    def forward(self, z):
-        t = F.elu(self.fc1(z))
-        t = F.elu(self.fc2(t))
-        p = self.fc3(t)
-        return p
-
-
-class ConvPreProcess(nn.Module):
-    """ The pre-process layer for image.
-    """
-
-    def __init__(self, input_size, d_hidden, d_out, blocks=None, scale=(2, 2, 2), stride=(2, 2, 2, 2),
-                 l_per_block=(2, 2, 2, 2)):
-        super().__init__()
-
-        d_in = input_size[0]
-        input_size = input_size[1:]
-
-        self.initial = nn.Conv2d(d_in, d_hidden, 7, 1, 3)
-        self.bn1 = nn.BatchNorm2d(d_hidden)
-
-        if blocks is None:
-            scales = np.cumprod([1] + list(scale))
-            blocks = [(l_per_block, int(d_hidden*scale), stride) for l_per_block, scale, stride in
-                      zip(l_per_block, scales, stride)]
-
-        self.resnet = ops.ResNet(d_hidden, blocks) # Will by default downscale to 224//16, 160//16,
-
-        self.final_shape = [int(i//(np.prod(stride))) for i in input_size]
-        self.total_size = np.prod(self.final_shape)*blocks[-1][1]
-
-        self.fc1 = nn.Linear(self.total_size, d_out*4)
-        self.bn2 = nn.BatchNorm1d(d_out*4)
-        self.fc2 = nn.Linear(d_out*4, d_out)
-
-    def forward(self, x):
-        x1 = self.initial(x)
-        x1 = F.elu(x1)
-        x1 = self.bn1(x1)
-        x2 = self.resnet(x1)
-        x3 = self.fc1(x2.flatten(1, -1))
-        x3 = F.elu(x3)
-        x3 = self.bn2(x3)
-        x4 = self.fc2(x3)
-        return x4
+from .gymtdvae import ConvPreProcess, PreProcess, DBlock
 
 
 class OptionProcessor(nn.Module):
@@ -129,21 +38,23 @@ class OptionProcessor(nn.Module):
 
 
 class HyperOption(nn.Module):
-    def __init__(self, z_dim, h_dim, a_dim, inner_h_dim=16, layers=2, distributional=False):
+    def __init__(self, z_dim, h_dim, a_dim, inner_h_dim=16, layers=1, distributional=False):
         super().__init__()
         self.fc1 = nn.Linear(z_dim, h_dim)
         self.fc2 = nn.Linear(h_dim, h_dim)
         self.output_fcs = nn.ModuleList()
-        self.total_sizes = [z_dim * inner_h_dim, inner_h_dim,]
-        for i in range(layers - 2):
-            self.total_sizes += [inner_h_dim**2, inner_h_dim]
-        self.total_sizes += [inner_h_dim*a_dim, a_dim]
+        if layers == 1:
+            self.total_sizes = [z_dim*a_dim, a_dim]
+        else:
+            self.total_sizes = [z_dim * inner_h_dim, inner_h_dim,]
+            for i in range(layers - 2):
+                self.total_sizes += [inner_h_dim**2, inner_h_dim]
+            self.total_sizes += [inner_h_dim*a_dim, a_dim]
 
         self.output_fc = nn.Linear(h_dim, int(np.sum(self.total_sizes)))
         self.output_var_fc = nn.Linear(h_dim, int(np.sum(self.total_sizes)))
 
         self.distributional = distributional
-
 
         self.relu = nn.LeakyReLU(0.2)
         self.bn1 = nn.BatchNorm1d(h_dim)
@@ -185,7 +96,7 @@ def apply_option(state, option, sizes):
 
 
 class OptionInferenceNetwork(nn.Module):
-    def __init__(self, zdim, adim, hdim, inner_h_dim, num_layers=2):
+    def __init__(self, zdim, adim, hdim, inner_h_dim, num_layers=1):
         super().__init__()
         self.emb = nn.Embedding(adim, hdim//4)
         self.recurrent = nn.LSTM(zdim+hdim//4, hdim, bidirectional=True, num_layers=num_layers)
@@ -255,126 +166,6 @@ class ActorCritic(nn.Module):
         dist_entropy = dist.entropy().mean()
 
         return value, action_log_probs, dist_entropy
-
-
-def init(module, weight_init, bias_init, gain=1):
-    weight_init(module.weight.data, gain=gain)
-    bias_init(module.bias.data)
-    return module
-
-
-class PPO(nn.Module):
-    def __init__(self,
-                 actor_critic,
-                 clip_param,
-                 ppo_epoch,
-                 num_mini_batch,
-                 value_loss_coef,
-                 entropy_coef,
-                 lr=None,
-                 eps=None,
-                 max_grad_norm=None,
-                 use_clipped_value_loss=True):
-
-        self.actor_critic = actor_critic
-
-        self.clip_param = clip_param
-        self.ppo_epoch = ppo_epoch
-        self.num_mini_batch = num_mini_batch
-
-        self.value_loss_coef = value_loss_coef
-        self.entropy_coef = entropy_coef
-
-        self.max_grad_norm = max_grad_norm
-        self.use_clipped_value_loss = use_clipped_value_loss
-
-        self.optimizer = torch.nn.optim.Adam(actor_critic.parameters(), lr=lr, eps=eps)
-
-def ppo_loss(values, action_log_probs, value_preds, returns, old_action_log_probs, adv_targ,
-             kls, clip=0.2, value_loss_coef=1, kl_coef=0.2, use_clipped_value_loss=True):
-    """
-    A PPO update.  Takes a single batch.
-    """
-    # obs_batch, recurrent_hidden_states_batch, actions_batch, \
-    # value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, \
-    # adv_targ =
-    #
-    # value_preds_batch
-    # states, actions, value_preds, action_log_probs, adv_targ = initial_states
-
-    # Reshape to do in a single forward pass for all steps
-    # values, action_log_probs, dist_entropy, _ = self.actor_critic.evaluate_actions(states, actions)
-
-    ratio = torch.exp(action_log_probs - old_action_log_probs)
-    surr1 = ratio * adv_targ
-    surr2 = torch.clamp(ratio, 1.0 - clip,
-                        1.0 + clip) * adv_targ
-    action_loss = -torch.min(surr1, surr2).mean()
-
-    if use_clipped_value_loss:
-        value_pred_clipped = value_preds + \
-                             (values - value_preds).clamp(-clip, clip)
-        value_losses = (values - returns).pow(2)
-        value_losses_clipped = (value_pred_clipped - returns).pow(2)
-        value_loss = 0.5 * torch.max(value_losses,
-                                     value_losses_clipped).mean()
-    else:
-        value_loss = 0.5 * (returns - values).pow(2).mean()
-
-    # self.optimizer.zero_grad()
-    # (value_loss * self.value_loss_coef + action_loss -
-    #  dist_entropy * self.entropy_coef).backward()
-    loss = value_loss*value_loss_coef + action_loss - kls.mean()*kl_coef
-    # loss.backward()
-    # nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
-    #                          self.max_grad_norm)
-    # self.optimizer.step()
-    return loss.mean(), value_loss.mean(), action_loss.mean(), kls.mean()
-
-
-class ConvDecoder(nn.Module):
-    """ The reconstruction layer for images.
-    """
-
-    def __init__(self, d_out, d_hidden, input_size, blocks=None, scale=(2, 2, 2, 2), stride=(2, 2, 2, 2, 2),
-                 l_per_block=(4, 4, 4, 4, 4)):
-        super().__init__()
-
-        d_in = input_size[0]
-        input_size = input_size[1:]
-
-        if blocks is None:
-            scales = np.cumprod([1] + list(scale))
-            blocks = [(l_per_block, int(d_hidden*scale), -stride) for l_per_block, scale, stride in
-                      zip(l_per_block, scales, stride)]
-
-        print(blocks)
-
-        self.final_shape = [int(i//np.prod(stride)) for i in input_size]
-        self.biases = nn.Parameter(torch.zeros(input_size), requires_grad=True)
-        self.total_size = int(np.prod(self.final_shape)*blocks[-1][1])
-        print(self.final_shape, self.total_size)
-        self.fc1 = nn.Linear(d_out, d_out*4)
-        self.bn1 = nn.BatchNorm1d(d_out*4)
-        self.fc2 = nn.Linear(d_out*4, self.total_size)
-        self.bn2 = nn.BatchNorm2d(blocks[-1][1])
-
-        self.resnet = ops.ResNet(blocks[-1][1], list(reversed(blocks)), skip_last_norm=False)
-
-        self.final = nn.Conv2d(d_hidden, d_in, 7, 1, 3)
-
-    def forward(self, x):
-        x1 = self.fc1(x)
-        x1 = F.elu(x1)
-        x1 = self.bn1(x1)
-        x2 = self.fc2(x1)
-        x2 = F.elu(x2)
-        x2 = x2.view(x.shape[0], x2.shape[1]//np.prod(self.final_shape), self.final_shape[0], self.final_shape[1])
-        x2 = self.bn2(x2)
-        x3 = self.resnet(x2)
-        x4 = self.final(x3)
-        return torch.sigmoid(x4.flatten(1, -1))
-
 
 class ReturnsDecoder(nn.Module):
 
@@ -511,6 +302,7 @@ class TDQVAE(nn.Module):
     def compute_q(self, x, actions, rewards, done):
         # pre-process image x
         im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
+
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
         if actions is not None:
@@ -535,33 +327,9 @@ class TDQVAE(nn.Module):
         z = torch.cat(zs, dim=1)
         return self.actor_critic.get_value(z)
 
-    def infer_option(self, b, actions, t1, t2):
-        """
-        Apply the option reconstruction network to infer an option for use in the current training iteration.
-        :param b:
-        :param t1:
-        :param t2:
-        :return:
-        """
-        qb_z2_b2_mus, qb_z2_b2_logvars, qb_z2_b2s = [], [], []
-        for layer in range(self.layers - 1, -1, -1):
-            if layer == self.layers - 1:
-                qb_z2_b2_mu, qb_z2_b2_logvar = self.z_b[layer](b[:, :, layer])
-            else:
-                qb_z2_b2_mu, qb_z2_b2_logvar = self.z_b[layer](torch.cat([b[:, :, layer], qb_z2_b2], dim=1))
-            qb_z2_b2_mus.insert(0, qb_z2_b2_mu)
-            qb_z2_b2_logvars.insert(0, qb_z2_b2_logvar)
-
-            qb_z2_b2 = ops.reparameterize_gaussian(qb_z2_b2_mu, qb_z2_b2_logvar, self.training)
-            qb_z2_b2s.insert(0, qb_z2_b2)
-
-        zs = torch.cat(qb_z2_b2, 1)
-
-        lengths = t2-t1
-        _, argsort = lengths.sort()
-
     def option_reconstruction(self, b, actions, t1, t2):
 
+        b = b.detach()
         qb_z2_b2_mus, qb_z2_b2_logvars, qb_z2_b2s = [], [], []
         for layer in range(self.layers - 1, -1, -1):
             if layer == self.layers - 1:
@@ -579,10 +347,10 @@ class TDQVAE(nn.Module):
         lengths = (t2-t1).squeeze(0)
         sorted_lengths, argsort = lengths.sort(descending=True)
         maxlen = torch.max(lengths, 0)[0].item()
-        indices = t1[0, :, None] + torch.arange(0, maxlen, device=b.device)[None, :].expand(b.shape[0], -1)
+        indices = t1[0, :, None] + torch.arange(0, maxlen, device=b.device)[None, :].expand(zs.shape[0], -1)
         indices = indices[:, :, None]
         indices = indices.clamp(0, b.shape[1]-1)
-        b_indices = indices.expand(-1, -1, b.shape[-1])
+        b_indices = indices.expand(-1, -1, zs.shape[-1])
         states = torch.gather(zs, 1, b_indices)
         actions = torch.gather(actions, 1, indices.squeeze(-1))
         sorted_states = states[argsort]
@@ -673,8 +441,7 @@ class TDQVAE(nn.Module):
         return q1, q2, action_embs, b1, qb_z2_b2_mu, qb_z2_b2_logvar, qb_z2_b2s, qb_z2_b2, pb_z1_b1_mu, pb_z1_b1_logvar,\
                pb_z1_b1, b
 
-    def predict_forward(self, qs_z1_b1, option, t_encodings, sampling=True):
-
+    def predict_forward(self, qs_z1_b1, option, t_encodings):
         pt_z2_z1_mus, pt_z2_z1_logvars, pt_z2_z1s = [], [], []
         option = self.option_embedding(option)
         for layer in range(self.layers - 1, -1, -1):
@@ -685,10 +452,8 @@ class TDQVAE(nn.Module):
                                                                             t_encodings, option], dim=-1))
             pt_z2_z1_mus.insert(0, pt_z2_z1_mu)
             pt_z2_z1_logvars.insert(0, pt_z2_z1_logvar)
-            pt_z2_z1s.insert(0, ops.reparameterize_gaussian(pt_z2_z1_mu, pt_z2_z1_logvar, sampling))
+            pt_z2_z1s.insert(0, ops.reparameterize_gaussian(pt_z2_z1_mu, pt_z2_z1_logvar, self.training))
 
-        pt_z2_z1_mu = torch.cat(pt_z2_z1_mus, dim=-1)
-        pt_z2_z1_logvar = torch.cat(pt_z2_z1_logvars, dim=-1)
         pt_z2_z1 = torch.cat(pt_z2_z1s, dim=-1)
         pd_g2_z2_mu = self.g_z(torch.cat([qs_z1_b1, pt_z2_z1, option, t_encodings], dim=-1))
         value = self.actor_critic.get_value(pt_z2_z1)
@@ -772,6 +537,7 @@ class TDQVAE(nn.Module):
         im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
         processed_x = self.process_x(im_x)  # max x length is max(t2) + 1
         processed_x = processed_x.view(x.shape[0], x.shape[1], -1)
+
         if actions is not None:
             rewards = (rewards[..., None] / 10.0).clamp(0.0, 2.0)
             action_embs = self.action_embedding(actions)
@@ -780,9 +546,13 @@ class TDQVAE(nn.Module):
             action_embs = None
 
         # aggregate the belief b
-        b = self.b_rnn(processed_x, done)[:, t]  # size: bs, time, layers, dim
+        full_b = self.b_rnn(processed_x, done)# size: bs, time, layers, dim
+        b = full_b[:, t]  # Just pick out relevant time
         t_encodings = self.time_encoding(b.new_zeros(b.size(0), dtype=torch.long)) * self.time_encoding_scale
-
+        t1 = torch.zeros(x.shape[0], device=x.device)
+        t2 = torch.zeros(x.shape[0], device=x.device) + x.shape[1] - 1
+        option, _, _, _ = self.option_reconstruction(full_b, actions, t1.unsqueeze(0).long(), t2.unsqueeze(0).long())
+        processed_option = self.option_embedding(option)
         # compute z from b
         p_z_bs = []
         for layer in range(self.layers - 1, -1, -1):
@@ -800,13 +570,13 @@ class TDQVAE(nn.Module):
             for layer in range(self.layers - 1, -1, -1):
                 if layer == self.layers - 1:
                     if actions is not None:
-                        inputs = torch.cat([z, t_encodings, actions[:, t+i+1]], dim=1)
+                        inputs = torch.cat([z, t_encodings, processed_option], dim=1)
                     else:
                         inputs = torch.cat([z, t_encodings], dim=1)
                     pt_z2_z1_mu, pt_z2_z1_logvar = self.z2_z1[layer](inputs)
                 else:
                     if actions is not None:
-                        inputs = torch.cat([z, pt_z2_z1, t_encodings, actions[:, t+i+1]], dim=1)
+                        inputs = torch.cat([z, pt_z2_z1, t_encodings, processed_option], dim=1)
                     else:
                         inputs = torch.cat([z, pt_z2_z1, t_encodings], dim=1)
                     pt_z2_z1_mu, pt_z2_z1_logvar = self.z2_z1[layer](inputs)
@@ -819,7 +589,7 @@ class TDQVAE(nn.Module):
         return torch.stack(rollout_x, dim=1)
 
     def predictive_control(self, x, actions, done, rewards, num_rollouts=100, rollout_length=1,
-                           jump_length=10, gamma=0.99):
+                           jump_length=10, gamma=0.99, boltzmann=True):
         with torch.no_grad():
             # pre-process image x
             im_x = x.view(-1, self.x_size[0], self.x_size[1], self.x_size[2])
@@ -864,15 +634,20 @@ class TDQVAE(nn.Module):
                 current, pd_g2, value = self.predict_forward(current, parameters, jump_encoding)
 
                 pd_g2 = pd_g2*(gamma ** (i*jump_length))
-                running =  pd_g2 + running
+                running = pd_g2 + running
 
             running = value*(gamma ** ((i+1)*jump_length)) + running
 
+            # print(running[0].mean().item(), running[0].var().item(), running[0].max().item(), running[0].min().item())
             best = torch.max(running, 1)[1]
             indices = best[:, None,].expand(-1, -1, parameters.shape[-1])
             best_option = torch.gather(parameters, 1, indices).squeeze(-2)
             action = apply_option(initial[:, 0], best_option, sizes)
-            action = torch.max(action, -1)[1]
+            if not boltzmann:
+                action = torch.max(action, -1)[1]
+            else:
+                dist = Categorical(logits = action)
+                action = dist.sample()
 
         return action.cpu().numpy()
 
@@ -895,7 +670,7 @@ class GymTDQVAE(BaseGymTDVAE):
             t_diff_max_poss = flags.t_diff_max_poss
 
         if model is None:
-            model_args = [(3, 80, 80), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
+            model_args = [(1, 40, 40), flags.h_size, 2*flags.b_size, flags.b_size, flags.z_size, flags.layers,
                           flags.samples_per_seq, flags.t_diff_min, flags.t_diff_max, t_diff_max_poss]
             model_kwargs = {'action_space': action_space}
             if rl:
@@ -1016,11 +791,12 @@ class GymTDQVAE(BaseGymTDVAE):
             q2_next = torch.gather(q2_next_target, 1, q2_next_index).view(-1)
             target_q1 = r1_next + self.flags.discount_factor * (1.0 - done1_next) * q1_next
             target_q2 = r2_next + self.flags.discount_factor * (1.0 - done2_next) * q2_next
-
+            print(q1[0], target_q1[0])
             rl_loss = 0.5 * (F.smooth_l1_loss(q1, target_q1, reduction='none') +
                              F.smooth_l1_loss(q2, target_q2, reduction='none'))
             # errors for prioritized experience replay
             rl_errors = 0.5 * (torch.abs(q1 - target_q1) + torch.abs(q2 - target_q2)).detach()
+
         else:
             returns_loss = 0.0
             rl_loss = 0.0
@@ -1028,6 +804,7 @@ class GymTDQVAE(BaseGymTDVAE):
             rl_errors = 0.0
 
         # multiply is_weight separately for ease of reporting
+        is_weight = is_weight.float()
         returns_loss = is_weight * returns_loss
         bce_optimal = is_weight * bce_optimal
         bce_diff = is_weight * bce_diff
@@ -1040,7 +817,7 @@ class GymTDQVAE(BaseGymTDVAE):
         beta = self.beta_decay.get_y(self.get_train_steps())
         tdvae_loss = bce_diff + returns_loss + hidden_loss + self.d_weight * g_loss + beta * (kl_div_qs_pb +
                                                                                               kl_shift_qb_pt)
-        option_loss = option_recon_loss + beta*kl_div_option
+        option_loss = option_recon_loss + beta*kl_div_option*0.01
         loss = self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss + option_loss
 
         if self.rl:  # workaround to work with non-RL setting

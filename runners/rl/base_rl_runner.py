@@ -40,6 +40,7 @@ class BaseRLRunner(runner.Runner):
             self.visualize = True
 
         self.mpc = flags.mpc
+        self.boltzmann_mpc = flags.boltzmann_mpc
         self.emulator = GymReader(flags.env, flags.seq_len, flags.batch_size, flags.threads, np.inf, raw=flags.raw)
         self.action_space = self.emulator.action_space()
         self.seq_len_upper = flags.seq_len
@@ -106,15 +107,16 @@ class BaseRLRunner(runner.Runner):
 
                 self.model.set_train(False)
                 with torch.no_grad():
-                    q = self.model.model.compute_q(obs, actions, rewards, done)
-                self.model.set_train(True)
+                    if self.mpc:
+                        selected_actions = self.model.model.predictive_control(obs, actions, rewards, done,
+                                                                               num_rollouts=50, rollout_length=1,
+                                                                               jump_length=5,
+                                                                               boltzmann=self.boltzmann_mpc)
+                    else:
+                        q = self.model.model.compute_q(obs, actions, rewards, done)
+                        selected_actions = torch.argmax(q, dim=1).cpu().numpy()
 
-                if self.mpc:
-                    selected_actions = self.model.model.predictive_control(obs, actions, rewards, done,
-                                                                           num_rollouts=10, rollout_length=5,
-                                                                           jump_length=5)
-                else:
-                    selected_actions = torch.argmax(q, dim=1).cpu().numpy()
+                self.model.set_train(True)
                 random_actions = np.random.randint(0, self.action_space, size=selected_actions.shape)
                 eps = self.eps_decay.get_y(self.model.get_train_steps())
                 do_random = np.random.choice(2, size=selected_actions.shape, p=[1. - eps, eps])

@@ -41,6 +41,7 @@ if __name__ == '__main__':
     arg(parser, 'adversarial', type=bool, default=False, help='Use an auxiliary adversarial loss on reconstructions')
     arg(parser, 'rl', type=bool, default=True, help='Do RL')
     arg(parser, 'mpc', type=bool, default=False, help='Do MPC')
+    arg(parser, 'boltzmann_mpc', type=bool, default=True, help='Do MPC with Boltzmann inner policies.')
     arg(parser, 'seq_len', type=int, default=20, help='sequence length')
     arg(parser, 'seq_len_decay_start', type=int, default=200000, help='step to start increasing seq len')
     arg(parser, 'seq_len_decay_end', type=int, default=400000, help='step at which seq len should be at maximum')
