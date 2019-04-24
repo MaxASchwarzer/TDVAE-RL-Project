@@ -299,7 +299,7 @@ class ReplayBuffer(Reader):
             idxs.append(idx)
 
         sampling_probabilities = priorities / self.buffer.total()
-        is_weight = np.power(self.buffer.count * sampling_probabilities, -self.beta)
+        is_weight = np.power(self.buffer.count * sampling_probabilities, -self.beta).astype(np.float32)
         is_weight /= is_weight.max()
         return batch, idxs, is_weight
 
