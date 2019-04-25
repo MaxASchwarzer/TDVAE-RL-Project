@@ -48,6 +48,8 @@ if __name__ == '__main__':
     arg(parser, 'seq_len_initial', type=int, default=-1, help='initial sequence length (for curriculum).  Default of '
                                                               '-1 disables this feature.')
     arg(parser, 'batch_size', type=int, default=32, help='batch size')
+    arg(parser, 'eval_episodes', type=int, default=10, help='number of episodes for evaluation (-1 for batch_size)')
+    arg(parser, 'eval_episode_length', type=int, default=2000, help='episode length for evaluation')
     arg(parser, 'replay_size', type=int, default=100000, help='Experience replay buffer size')
     arg(parser, 'initial_replay_size', type=int, default=10000, help='Initial experience replay buffer size')
     arg(parser, 'freeze_every', type=int, default=1000, help='Freeze a Q network every this many steps')
@@ -58,9 +60,6 @@ if __name__ == '__main__':
     arg(parser, 'eps_final', type=float, default=0.02, help='Final epsilon for epsilon-greedy')
     arg(parser, 'add_replay_every', type=int, default=8, help='Take an action and add to replay buffer every these '
                                                               'many steps (final value if decayed)')
-    arg(parser, 'add_every_start', type=int, default=200000, help='Iteration to start decaying add_replay_every at')
-    arg(parser, 'add_every_end', type=int, default=400000, help='Iteration to stop decaying add_replay_every at')
-    arg(parser, 'add_every_initial', type=int, default=-1, help='Initial add_replay_every')
     arg(parser, 'h_size', type=int, default=32, help='Base #channels for resnets before downscaling.')
     arg(parser, 'd_size', type=int, default=16, help='Base #channels for discriminator before downscaling.')
     arg(parser, 'b_size', type=int, default=32, help='belief size')

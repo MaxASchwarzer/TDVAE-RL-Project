@@ -32,6 +32,8 @@ class GymRLRunner(BaseRLRunner):
         images, actions, rewards, done = self.model.prepare_batch([images[:, :t + n], actions[:, :t + n],
                                                                    rewards[:, :t + n], done[:, :t + n]])
         out = self.model.run_batch([images, t, n, actions, rewards, done], visualize=True)
+        if out is None:
+            return None
 
         batch = images.cpu().numpy()[:, :t]
         out = out.cpu().numpy().reshape(out.shape[0], out.shape[1], batch.shape[2], batch.shape[3], batch.shape[4])
@@ -43,7 +45,11 @@ class GymRLRunner(BaseRLRunner):
 
     def post_epoch_visualize(self, epoch, split):
         print('* Visualizing', split)
-        vis_data, aspect = self._visualize_split(split, self.history_length, 5)
-        fname = self.flags.log_dir + '/{}'.format(split) + '%03d.png' % epoch
-        misc.save_comparison_grid(fname, vis_data, rows_cols=aspect, border_shade=1.0, retain_sequence=True)
-        print('* Visualizations saved to', fname)
+        out = self._visualize_split(split, self.history_length, 5)
+        if out is not None:
+            vis_data, aspect = out
+            fname = self.flags.log_dir + '/{}'.format(split) + '%03d.png' % epoch
+            misc.save_comparison_grid(fname, vis_data, rows_cols=aspect, border_shade=1.0, retain_sequence=True)
+            print('* Visualizations saved to', fname)
+        else:
+            print('* Visualization skipped')

@@ -2,13 +2,13 @@ from collections import deque
 from multiprocessing import Process, Pipe
 import pickle
 
-from baselines.common import atari_wrappers as atari
 import gym
 import gym_vecenv as vecenv
 import numpy as np
 import torch
 import torch.nn.functional as F
 
+from baselines.common import atari_wrappers as atari
 from pylego import misc
 from pylego.reader import Reader
 
@@ -128,6 +128,9 @@ class ActionConditionalBatch:  # TODO move generalized form of this to pylego
         output = [o[:self.batch_size] for o in output]
         return output
 
+    def reset(self):
+        self.env.reset()
+
     def close(self):
         self.env.close()
 
@@ -160,6 +163,9 @@ class GymReader(Reader):  # TODO move generalized form of this to pylego
             generator = range(epochs * epoch_size)
         for _ in generator:
             yield self.action_conditional_batch
+
+    def reset(self):
+        self.action_conditional_batch.reset()
 
     def close(self):
         self.action_conditional_batch.close()
@@ -353,10 +359,11 @@ def worker(remote, parent_remote, env_fn_wrappers):
                 ob, reward, done, info = env.step(action)
                 obs.append(ob)
                 rewards.append(reward)
-                if reward < 0.0:
-                    dones.append(True)  # FIXME for now, consider episode done when something bad happens
-                else:
-                    dones.append(done)
+                # if reward < 0.0:
+                #     dones.append(True)  # FIXME for now, consider episode done when something bad happens
+                # else:
+                #     dones.append(done)
+                dones.append(done)
                 infos.append(info)
                 if np.any(done):
                     ob = env.reset()
