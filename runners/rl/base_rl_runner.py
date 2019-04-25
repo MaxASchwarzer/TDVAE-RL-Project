@@ -97,10 +97,10 @@ class BaseRLRunner(runner.Runner):
             except StopIteration:
                 break
 
-            if self.mpc and option_length == 0:
-                option_length = np.random.randint(4, 20)
-                option = None
             seq_len = int(self.seq_len_decay.get_y(self.model.get_train_steps()))
+            if self.mpc and option_length == 0:
+                option_length = np.random.randint(4, self.seq_len_upper-2)
+                option = None
             self.history_length = int(np.ceil(0.5 * (seq_len + self.flags.t_diff_min))) - 1
             simulation_start = seq_len - self.history_length
             obs, actions, rewards, done = self.emulator_state[:4]
@@ -116,7 +116,7 @@ class BaseRLRunner(runner.Runner):
                     selected_actions, option = self.model.model.predictive_control(obs, actions, rewards, done,
                                                                                    option=option,
                                                                                    num_rollouts=50, rollout_length=1,
-                                                                                   jump_length=1,
+                                                                                   jump_length=option_length,
                                                                                    gamma=self.discount_factor,
                                                                                    boltzmann=self.boltzmann_mpc)
                     option_length -= 1
@@ -176,7 +176,7 @@ class BaseRLRunner(runner.Runner):
             self.model.set_train(False)
             with torch.no_grad():
                 if self.mpc:
-                    actions = self.model.model.predictive_control(obs, actions, rewards, done,
+                    actions, option = self.model.model.predictive_control(obs, actions, rewards, done,
                                                                   num_rollouts=50, rollout_length=1,
                                                                   jump_length=5,
                                                                   gamma=self.discount_factor,

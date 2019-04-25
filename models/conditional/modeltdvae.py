@@ -644,12 +644,12 @@ class TDQVAE(nn.Module):
                 indices = best[:, None,].expand(-1, -1, parameters.shape[-1])
                 option = torch.gather(parameters, 1, indices).squeeze(-2)
             action = apply_option(initial[:, 0], option, sizes)
-            if not boltzmann:
-                action = torch.max(action, -1)[1]
-            else:
+            if boltzmann:
                 print(F.softmax(2*action[0].flatten()))
                 dist = Categorical(logits=2*action)
                 action = dist.sample()
+            else:
+                action = torch.max(action, -1)[1]
 
         return action.cpu().numpy(), option
 
