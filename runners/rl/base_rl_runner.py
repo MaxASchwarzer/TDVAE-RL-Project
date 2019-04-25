@@ -54,8 +54,6 @@ class BaseRLRunner(runner.Runner):
                               flags.t_diff_min, flags.t_diff_max, flags.discount_factor,
                               initial_len=int(self.seq_len_decay.get_y(0)), skip_init=bool(flags.load_file))
 
-        self.discount_factor = flags.discount_factor
-
         summary_dir = flags.log_dir + '/summary'
         log_keys.extend(['rewards_per_ep_mean', 'rewards_per_ep_std'])
         super().__init__(reader, flags.batch_size, flags.epochs, summary_dir, log_keys=log_keys,
@@ -118,7 +116,7 @@ class BaseRLRunner(runner.Runner):
                                                                                    option=option, num_rollouts=50,
                                                                                    rollout_length=1,
                                                                                    jump_length=option_length,
-                                                                                   gamma=self.discount_factor,
+                                                                                   gamma=self.flags.discount_factor,
                                                                                    boltzmann=self.boltzmann_mpc)
                     option_length -= 1
                 else:
@@ -179,7 +177,8 @@ class BaseRLRunner(runner.Runner):
                 if self.mpc:
                     actions, option = self.model.model.predictive_control(obs, actions, rewards, done, num_rollouts=50,
                                                                           rollout_length=1, jump_length=5,
-                                                                          gamma=self.discount_factor, boltzmann=False)
+                                                                          gamma=self.flags.discount_factor,
+                                                                          boltzmann=False)
                 else:
                     q = self.model.model.compute_q(obs, actions, rewards, done)
                     actions = torch.argmax(q, dim=1).cpu().numpy()
