@@ -362,7 +362,7 @@ class TDQVAE(nn.Module):
         parameters = ops.reparameterize_gaussian(mean, logvar, self.training)
         inferred_actions = apply_option(states, parameters, sizes)
 
-        reconstruction_loss = F.cross_entropy(inferred_actions.transpose(-1, -2), actions, reduction="none")
+        reconstruction_loss = F.cross_entropy(inferred_actions.transpose(-1, -2)*2, actions, reduction="none")
         reconstruction_loss = torch.gather(torch.cumsum(reconstruction_loss, 1), 1, (lengths-1)[:, None])
 
         _, unsort = argsort.sort()
@@ -588,7 +588,7 @@ class TDQVAE(nn.Module):
 
         return torch.stack(rollout_x, dim=1)
 
-    def predictive_control(self, x, actions, done, rewards, num_rollouts=100, rollout_length=1,
+    def predictive_control(self, x, actions, done, rewards, num_rollouts=100, rollout_length=1, option=None,
                            jump_length=10, gamma=0.99, boltzmann=True):
         with torch.no_grad():
             # pre-process image x
@@ -625,31 +625,33 @@ class TDQVAE(nn.Module):
             sizes = self.actor_critic.base.total_sizes
             parameters = distributions.sample((x.shape[0], num_rollouts, int(np.sum(sizes)))).to(b.device)
 
-            current = initial
-            running = 0
-            jump_encoding = torch.tensor([jump_length], device=b.device, dtype=torch.long)
-            jump_encoding = jump_encoding[None, None, :].expand(current.shape[0], current.shape[1], -1)
-            jump_encoding = self.time_encoding(jump_encoding).squeeze(-2)
-            for i in range(rollout_length):
-                current, pd_g2, value = self.predict_forward(current, parameters, jump_encoding)
+            if option is None:
+                current = initial
+                running = 0
+                jump_encoding = torch.tensor([jump_length], device=b.device, dtype=torch.long)
+                jump_encoding = jump_encoding[None, None, :].expand(current.shape[0], current.shape[1], -1)
+                jump_encoding = self.time_encoding(jump_encoding).squeeze(-2)
+                for i in range(rollout_length):
+                    current, pd_g2, value = self.predict_forward(current, parameters, jump_encoding)
 
-                pd_g2 = pd_g2*(gamma ** (i*jump_length))
-                running = pd_g2 + running
+                    pd_g2 = pd_g2*(gamma ** (i*jump_length))
+                    running = pd_g2 + running
 
-            running = value*(gamma ** ((i+1)*jump_length)) + running
+                running = value*(gamma ** ((i+1)*jump_length)) + running
 
-            # print(running[0].mean().item(), running[0].var().item(), running[0].max().item(), running[0].min().item())
-            best = torch.max(running, 1)[1]
-            indices = best[:, None,].expand(-1, -1, parameters.shape[-1])
-            best_option = torch.gather(parameters, 1, indices).squeeze(-2)
-            action = apply_option(initial[:, 0], best_option, sizes)
+                print(running[0].mean().item(), running[0].var().item(), running[0].max().item(), running[0].min().item())
+                best = torch.max(running, 1)[1]
+                indices = best[:, None,].expand(-1, -1, parameters.shape[-1])
+                option = torch.gather(parameters, 1, indices).squeeze(-2)
+            action = apply_option(initial[:, 0], option, sizes)
             if not boltzmann:
                 action = torch.max(action, -1)[1]
             else:
-                dist = Categorical(logits = action)
+                print(F.softmax(2*action[0].flatten()))
+                dist = Categorical(logits=2*action)
                 action = dist.sample()
 
-        return action.cpu().numpy()
+        return action.cpu().numpy(), option
 
 
 class GymTDQVAE(BaseGymTDVAE):
@@ -791,7 +793,6 @@ class GymTDQVAE(BaseGymTDVAE):
             q2_next = torch.gather(q2_next_target, 1, q2_next_index).view(-1)
             target_q1 = r1_next + self.flags.discount_factor * (1.0 - done1_next) * q1_next
             target_q2 = r2_next + self.flags.discount_factor * (1.0 - done2_next) * q2_next
-            print(q1[0], target_q1[0])
             rl_loss = 0.5 * (F.smooth_l1_loss(q1, target_q1, reduction='none') +
                              F.smooth_l1_loss(q2, target_q2, reduction='none'))
             # errors for prioritized experience replay
@@ -817,7 +818,7 @@ class GymTDQVAE(BaseGymTDVAE):
         beta = self.beta_decay.get_y(self.get_train_steps())
         tdvae_loss = bce_diff + returns_loss + hidden_loss + self.d_weight * g_loss + beta * (kl_div_qs_pb +
                                                                                               kl_shift_qb_pt)
-        option_loss = option_recon_loss + beta*kl_div_option*0.01
+        option_loss = option_recon_loss + beta*kl_div_option*0.001
         loss = self.flags.tdvae_weight * tdvae_loss + self.flags.rl_weight * rl_loss + option_loss
 
         if self.rl:  # workaround to work with non-RL setting
