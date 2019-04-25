@@ -115,8 +115,8 @@ class BaseRLRunner(runner.Runner):
             with torch.no_grad():
                 if self.mpc:
                     selected_actions, option = self.model.model.predictive_control(obs, actions, rewards, done,
-                                                                                   option=option,
-                                                                                   num_rollouts=50, rollout_length=1,
+                                                                                   option=option, num_rollouts=50,
+                                                                                   rollout_length=1,
                                                                                    jump_length=option_length,
                                                                                    gamma=self.discount_factor,
                                                                                    boltzmann=self.boltzmann_mpc)
@@ -177,11 +177,9 @@ class BaseRLRunner(runner.Runner):
             self.model.set_train(False)
             with torch.no_grad():
                 if self.mpc:
-                    actions, option = self.model.model.predictive_control(obs, actions, rewards, done,
-                                                                  num_rollouts=50, rollout_length=1,
-                                                                  jump_length=5,
-                                                                  gamma=self.discount_factor,
-                                                                  boltzmann=False)
+                    actions, option = self.model.model.predictive_control(obs, actions, rewards, done, num_rollouts=50,
+                                                                          rollout_length=1, jump_length=5,
+                                                                          gamma=self.discount_factor, boltzmann=False)
                 else:
                     q = self.model.model.compute_q(obs, actions, rewards, done)
                     actions = torch.argmax(q, dim=1).cpu().numpy()
