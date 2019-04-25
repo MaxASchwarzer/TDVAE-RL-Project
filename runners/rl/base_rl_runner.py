@@ -54,6 +54,8 @@ class BaseRLRunner(runner.Runner):
                               flags.t_diff_min, flags.t_diff_max, flags.discount_factor,
                               initial_len=int(self.seq_len_decay.get_y(0)), skip_init=bool(flags.load_file))
 
+        self.discount_factor = flags.discount_factor
+
         summary_dir = flags.log_dir + '/summary'
         log_keys.extend(['rewards_per_ep_mean', 'rewards_per_ep_std'])
         super().__init__(reader, flags.batch_size, flags.epochs, summary_dir, log_keys=log_keys,
@@ -88,6 +90,8 @@ class BaseRLRunner(runner.Runner):
         timestamp = time.time()
         reader_iter = self.reader.iter_batches(split, self.batch_size, shuffle=train, partial_batching=not train,
                                                threads=self.threads, max_batches=self.max_batches)
+        if self.mpc:
+            option_length = 0
         for i in range(self.reader.get_size(split)):
             try:
                 train_batch = next(reader_iter)
@@ -95,9 +99,11 @@ class BaseRLRunner(runner.Runner):
                 break
 
             seq_len = int(self.seq_len_decay.get_y(self.model.get_train_steps()))
+            if self.mpc and option_length == 0:
+                option_length = np.random.randint(4, self.seq_len_upper-2)
+                option = None
             self.history_length = int(np.ceil(0.5 * (seq_len + self.flags.t_diff_min))) - 1
             simulation_start = seq_len - self.history_length
-
             obs, actions, rewards, done = self.emulator_state[:4]
             obs = obs[:, simulation_start:]
             actions = actions[:, simulation_start:]
@@ -108,10 +114,13 @@ class BaseRLRunner(runner.Runner):
             self.model.set_train(False)
             with torch.no_grad():
                 if self.mpc:
-                    selected_actions = self.model.model.predictive_control(obs, actions, rewards, done,
-                                                                           num_rollouts=50, rollout_length=1,
-                                                                           jump_length=5,
-                                                                           boltzmann=self.boltzmann_mpc)
+                    selected_actions, option = self.model.model.predictive_control(obs, actions, rewards, done,
+                                                                                   option=option,
+                                                                                   num_rollouts=50, rollout_length=1,
+                                                                                   jump_length=option_length,
+                                                                                   gamma=self.discount_factor,
+                                                                                   boltzmann=self.boltzmann_mpc)
+                    option_length -= 1
                 else:
                     q = self.model.model.compute_q(obs, actions, rewards, done)
                     selected_actions = torch.argmax(q, dim=1).cpu().numpy()
@@ -167,9 +176,16 @@ class BaseRLRunner(runner.Runner):
             obs, actions, rewards, done = self.model.prepare_batch([obs, actions, rewards, done])
             self.model.set_train(False)
             with torch.no_grad():
-                q = self.model.model.compute_q(obs, actions, rewards, done)
+                if self.mpc:
+                    actions, option = self.model.model.predictive_control(obs, actions, rewards, done,
+                                                                  num_rollouts=50, rollout_length=1,
+                                                                  jump_length=5,
+                                                                  gamma=self.discount_factor,
+                                                                  boltzmann=False)
+                else:
+                    q = self.model.model.compute_q(obs, actions, rewards, done)
+                    actions = torch.argmax(q, dim=1).cpu().numpy()
             self.model.set_train(True)
-            actions = torch.argmax(q, dim=1).cpu().numpy()
 
         report = {'rewards_per_ep_mean': sum_of_rewards.mean(), 'rewards_per_ep_std': sum_of_rewards.std()}
         self.log_report(report, self.model.get_train_steps())
