@@ -66,8 +66,9 @@ class BaseRLRunner(runner.Runner):
                                  max_save_files=2, debug=flags.debug)
 
         # consider history length for simulation to be the expected t seen during TDQVAE training
-        self.history_length = int(np.ceil(0.5 * (int(self.seq_len_decay.get_y(0)) + flags.t_diff_min))) - 1
-        print('* Initial simulation history length:', self.history_length)
+        self.history_length = int(np.ceil(0.5 * (int(self.seq_len_decay.get_y(self.model.get_train_steps())) +
+                                                 flags.t_diff_min))) - 1
+        print('* Current simulation history length:', self.history_length)
 
         self.emulator_iter = self.emulator.iter_batches('train', self.emulator.batch_size, threads=flags.threads)
         self.emulator_state = next(self.emulator_iter).get_next()[:5]  # init emulator state after model loading
