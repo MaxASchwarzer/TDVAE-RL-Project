@@ -82,7 +82,7 @@ if __name__ == '__main__':
         print('Reading event files')
         with_tdvae = ('with_tdvae', read('with_tdvae', 'with_tdvae_cont'))
         without_tdvae = ('without_tdvae', read('without_tdvae', 'without_tdvae_cont'))
-        drqn = ('drqn', read('drqn'))
+        drqn = ('drqn', read('drqn', 'drqn_cont'))
         print('Dumping to file')
         with open(dump_file, 'wb') as f:
             pickle.dump((with_tdvae, without_tdvae, drqn), f)
