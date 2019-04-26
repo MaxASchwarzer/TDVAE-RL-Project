@@ -328,8 +328,7 @@ class TDQVAE(nn.Module):
         return self.actor_critic.get_value(z)
 
     def option_reconstruction(self, b, actions, t1, t2):
-
-        b = b.detach()
+        b = b
         qb_z2_b2_mus, qb_z2_b2_logvars, qb_z2_b2s = [], [], []
         for layer in range(self.layers - 1, -1, -1):
             if layer == self.layers - 1:
@@ -362,7 +361,7 @@ class TDQVAE(nn.Module):
         parameters = ops.reparameterize_gaussian(mean, logvar, self.training)
         inferred_actions = apply_option(states, parameters, sizes)
 
-        reconstruction_loss = F.cross_entropy(inferred_actions.transpose(-1, -2)*2, actions, reduction="none")
+        reconstruction_loss = F.cross_entropy(inferred_actions.transpose(-1, -2), actions, reduction="none")
         reconstruction_loss = torch.gather(torch.cumsum(reconstruction_loss, 1), 1, (lengths-1)[:, None])
 
         _, unsort = argsort.sort()
@@ -645,8 +644,8 @@ class TDQVAE(nn.Module):
                 option = torch.gather(parameters, 1, indices).squeeze(-2)
             action = apply_option(initial[:, 0], option, sizes)
             if boltzmann:
-                print(F.softmax(2*action[0].flatten()))
-                dist = Categorical(logits=2*action)
+                print(F.softmax(action[0].flatten()))
+                dist = Categorical(logits=action)
                 action = dist.sample()
             else:
                 action = torch.max(action, -1)[1]
@@ -655,7 +654,6 @@ class TDQVAE(nn.Module):
 
 
 class GymTDQVAE(BaseGymTDVAE):
-
     def __init__(self, flags, model=None, action_space=20, rl=False, replay_buffer=None, *args, **kwargs):
         self.rl = rl
         self.model_based = True
