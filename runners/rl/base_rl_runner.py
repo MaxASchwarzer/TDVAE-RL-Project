@@ -54,8 +54,6 @@ class BaseRLRunner(runner.Runner):
                               flags.t_diff_min, flags.t_diff_max, flags.discount_factor,
                               initial_len=int(self.seq_len_decay.get_y(0)), skip_init=bool(flags.load_file))
 
-        self.discount_factor = flags.discount_factor
-
         summary_dir = flags.log_dir + '/summary'
         log_keys.extend(['rewards_per_ep_mean', 'rewards_per_ep_std'])
         super().__init__(reader, flags.batch_size, flags.epochs, summary_dir, log_keys=log_keys,
@@ -68,8 +66,9 @@ class BaseRLRunner(runner.Runner):
                                  max_save_files=2, debug=flags.debug)
 
         # consider history length for simulation to be the expected t seen during TDQVAE training
-        self.history_length = int(np.ceil(0.5 * (int(self.seq_len_decay.get_y(0)) + flags.t_diff_min))) - 1
-        print('* Initial simulation history length:', self.history_length)
+        self.history_length = int(np.ceil(0.5 * (int(self.seq_len_decay.get_y(self.model.get_train_steps())) +
+                                                 flags.t_diff_min))) - 1
+        print('* Current simulation history length:', self.history_length)
 
         self.emulator_iter = self.emulator.iter_batches('train', self.emulator.batch_size, threads=flags.threads)
         self.emulator_state = next(self.emulator_iter).get_next()[:5]  # init emulator state after model loading
@@ -114,10 +113,10 @@ class BaseRLRunner(runner.Runner):
             with torch.no_grad():
                 if self.mpc:
                     selected_actions, option = self.model.model.predictive_control(obs, actions, rewards, done,
-                                                                                   option=option,
-                                                                                   num_rollouts=50, rollout_length=1,
+                                                                                   option=option, num_rollouts=50,
+                                                                                   rollout_length=1,
                                                                                    jump_length=option_length,
-                                                                                   gamma=self.discount_factor,
+                                                                                   gamma=self.flags.discount_factor,
                                                                                    boltzmann=self.boltzmann_mpc)
                     option_length -= 1
                 else:
@@ -181,7 +180,6 @@ class BaseRLRunner(runner.Runner):
                                                                           jump_length=1,
                                                                           gamma=self.discount_factor,
                                                                           boltzmann=False)
-
                 else:
                     q = self.model.model.compute_q(obs, actions, rewards, done)
                     actions = torch.argmax(q, dim=1).cpu().numpy()
