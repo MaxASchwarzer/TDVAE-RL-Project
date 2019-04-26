@@ -3,6 +3,8 @@ import glob
 from pathlib import Path
 import pickle
 
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -39,9 +41,11 @@ def plot_compare(*plots, smoothing_window=50):
     keys = set()
     for plot in plots:
         keys.update(plot[1].keys())
+    n_plots = 0
     for key in keys:
         if not key.endswith('_mean'):
             continue
+        assert n_plots == 0
         fig = plt.figure(figsize=(6.75, 5.0))
         ax = fig.gca()
         xlim = np.inf
@@ -65,10 +69,12 @@ def plot_compare(*plots, smoothing_window=50):
         plt.legend(loc='lower right', fontsize='small')
         plt.xlabel('Iteration (x1000)')
         plt.ylabel('Sum of rewards')
-        plt.title('%s' % key)
-        plt.show()
-        # plt.savefig('figures/logs_%s_%s_%d.pdf' % (best_using, set_str, i_gamma), bbox_inches='tight')
+        # plt.title('%s' % key)
+        plt.title('Model-free Performance')
+        # plt.show()
+        plt.savefig('modelfree.pdf')
         plt.close(fig)
+        n_plots += 1
 
 
 if __name__ == '__main__':
@@ -76,19 +82,19 @@ if __name__ == '__main__':
     if Path(dump_file).is_file():
         print('Loading from dump (delete', dump_file, 'to re-read event files)')
         with open(dump_file, 'rb') as f:
-            with_tdvae, without_tdvae, drqn = pickle.load(f)
+            with_tdvae, drqn = pickle.load(f)
         print('Loaded')
     else:
         print('Reading event files')
-        with_tdvae = ('with_tdvae', read('with_tdvae', 'with_tdvae_cont'))
-        without_tdvae = ('without_tdvae', read('without_tdvae', 'without_tdvae_cont'))
-        drqn = ('drqn', read('drqn', 'drqn_cont'))
+        with_tdvae = ('TDQVAE', read('with_tdvae', 'with_tdvae_cont'))
+        # without_tdvae = ('DRQN (with state sampling)', read('without_tdvae', 'without_tdvae_cont'))
+        drqn = ('DRQN', read('drqn', 'drqn_cont'))
         print('Dumping to file')
         with open(dump_file, 'wb') as f:
-            pickle.dump((with_tdvae, without_tdvae, drqn), f)
+            pickle.dump((with_tdvae, drqn), f)
         print('Dumpted and loaded')
     print()
 
     print('Plotting')
-    plot_compare(with_tdvae, without_tdvae, drqn)
+    plot_compare(with_tdvae, drqn)
     print('All done')
