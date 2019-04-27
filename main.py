@@ -30,9 +30,9 @@ if __name__ == '__main__':
     arg(parser, 'd_steps', type=int, default=1, help='Disc steps per Gen step.')
     arg(parser, 'd_start', type=int, default=5, help='Epochs before generator starts to train on disc. loss.')
     arg(parser, 'beta', type=float, default=1, help='Parameter controlling KL loss scale')
-    arg(parser, 'beta_decay_start', type=int, default=200000, help='step to start increasing beta')
-    arg(parser, 'beta_decay_end', type=int, default=400000, help='step at which beta should be at maximum')
-    arg(parser, 'beta_initial', type=float, default=1, help='initial beta (for curriculum).  Default of '
+    arg(parser, 'beta_decay_start', type=int, default=1, help='step to start increasing beta')
+    arg(parser, 'beta_decay_end', type=int, default=50000, help='step at which beta should be at maximum')
+    arg(parser, 'beta_initial', type=float, default=0.0001, help='initial beta (for curriculum).  Default of '
                                                             '1 disables this feature.')
     arg(parser, 'd_weight', type=float, default=10, help='Parameter for discriminator loss scale')
     arg(parser, 'tdvae_weight', type=float, default=1e-4, help='Parameter for TDVAE loss scale')
@@ -43,9 +43,9 @@ if __name__ == '__main__':
     arg(parser, 'mpc', type=bool, default=False, help='Do MPC')
     arg(parser, 'boltzmann_mpc', type=bool, default=True, help='Do MPC with Boltzmann inner policies.')
     arg(parser, 'seq_len', type=int, default=20, help='sequence length')
-    arg(parser, 'seq_len_decay_start', type=int, default=200000, help='step to start increasing seq len')
-    arg(parser, 'seq_len_decay_end', type=int, default=400000, help='step at which seq len should be at maximum')
-    arg(parser, 'seq_len_initial', type=int, default=-1, help='initial sequence length (for curriculum).  Default of '
+    arg(parser, 'seq_len_decay_start', type=int, default=1, help='step to start increasing seq len')
+    arg(parser, 'seq_len_decay_end', type=int, default=50000, help='step at which seq len should be at maximum')
+    arg(parser, 'seq_len_initial', type=int, default=4, help='initial sequence length (for curriculum).  Default of '
                                                               '-1 disables this feature.')
     arg(parser, 'batch_size', type=int, default=32, help='batch size')
     arg(parser, 'eval_episodes', type=int, default=10, help='number of episodes for evaluation (-1 for batch_size)')
