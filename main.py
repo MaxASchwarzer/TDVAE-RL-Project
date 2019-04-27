@@ -44,7 +44,7 @@ if __name__ == '__main__':
     arg(parser, 'boltzmann_mpc', type=bool, default=True, help='Do MPC with Boltzmann inner policies.')
     arg(parser, 'seq_len', type=int, default=20, help='sequence length')
     arg(parser, 'seq_len_decay_start', type=int, default=1, help='step to start increasing seq len')
-    arg(parser, 'seq_len_decay_end', type=int, default=50000, help='step at which seq len should be at maximum')
+    arg(parser, 'seq_len_decay_end', type=int, default=100000, help='step at which seq len should be at maximum')
     arg(parser, 'seq_len_initial', type=int, default=4, help='initial sequence length (for curriculum).  Default of '
                                                               '-1 disables this feature.')
     arg(parser, 'batch_size', type=int, default=32, help='batch size')
