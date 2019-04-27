@@ -16,3 +16,9 @@ Here are the results on Moving MNIST, where the context length is 1, and the rem
 
 [1]: https://github.com/ankitkv/pylego
 [2]: https://arxiv.org/abs/1806.03107
+
+## Replication
+To replicate our results:
+1.  For model-free, run `python main.py --model conditional.tdvae  --name tdqvae`
+2.  For the DQN baseline, run `python main.py --model conditional.drqn --rl True  --name dqn`
+2.  For model-based, run `python main.py --model conditional.modeltdvae --tdvae_weight 1 --rl_weight 10 --mpc True --eps_decay_end 1 --name mpc`
